@@ -1,0 +1,26 @@
+# DFO Configuration Example
+# Copy this file to .dfo.yaml and customize for your repository
+
+registry:
+  # Default registry for all containers
+  default: reg.g5d.dev
+
+# Required: Default signing key for package builds
+# Can be overridden with --signing-key flag
+signing_key: /path/to/signing.key
+
+# Per-container configuration
+containers:
+  # Example: redis container pushed to default registry + additional registries
+  redis:
+    additional_registries:
+      - ghcr.io/greboid
+      - docker.io/greboid
+
+  # Example: postgres pushed only to default registry
+  # postgres-15:
+
+  # Example: miniflux pushed to GitHub Container Registry only
+  miniflux:
+    additional_registries:
+      - ghcr.io/greboid
