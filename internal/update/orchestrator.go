@@ -50,7 +50,7 @@ type UpdateResult struct {
 }
 
 // CheckAndUpdate checks for package updates and rebuilds as needed
-func (o *Orchestrator) CheckAndUpdate(dryRun bool, autoPush bool) (*UpdateResult, error) {
+func (o *Orchestrator) CheckAndUpdate(dryRun bool, autoPush bool, force bool) (*UpdateResult, error) {
 	result := &UpdateResult{
 		UpdatedPackages:    []string{},
 		AffectedContainers: []string{},
@@ -74,8 +74,19 @@ func (o *Orchestrator) CheckAndUpdate(dryRun bool, autoPush bool) (*UpdateResult
 	var packagesToUpdate []string
 	for name, info := range versionInfo {
 		result.VersionChanges[name] = info
-		if info.NeedsUpdate {
-			fmt.Printf("Update available: %s %s -> %s\n", name, info.CurrentVersion, info.LatestVersion)
+		// With force flag, update all packages regardless of version
+		// Without force, only update if version changed
+		if force || info.NeedsUpdate {
+			if info.NeedsUpdate {
+				fmt.Printf("Update available: %s %s -> %s\n", name, info.CurrentVersion, info.LatestVersion)
+			} else if force {
+				// Show if the version will change due to transform/cleanup
+				if info.CurrentVersion != info.LatestVersion {
+					fmt.Printf("Force updating: %s %s -> %s (cleaning version format)\n", name, info.CurrentVersion, info.LatestVersion)
+				} else {
+					fmt.Printf("Force updating: %s %s (already at latest)\n", name, info.CurrentVersion)
+				}
+			}
 			packagesToUpdate = append(packagesToUpdate, name)
 		}
 	}

@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -66,8 +67,11 @@ func (g *Graph) TopologicalSort() ([]string, error) {
 		visited[node] = true
 		path = append(path, node)
 
-		// Visit dependencies first
-		for _, dep := range g.dependencies[node] {
+		// Visit dependencies first (sorted alphabetically for stable order)
+		deps := make([]string, len(g.dependencies[node]))
+		copy(deps, g.dependencies[node])
+		sort.Strings(deps)
+		for _, dep := range deps {
 			if err := visit(dep); err != nil {
 				return err
 			}
@@ -79,8 +83,14 @@ func (g *Graph) TopologicalSort() ([]string, error) {
 		return nil
 	}
 
-	// Visit all nodes
+	// Visit all nodes in alphabetical order for stable ordering
+	nodeList := make([]string, 0, len(g.nodes))
 	for node := range g.nodes {
+		nodeList = append(nodeList, node)
+	}
+	sort.Strings(nodeList)
+
+	for _, node := range nodeList {
 		if !visited[node] {
 			if err := visit(node); err != nil {
 				return nil, err

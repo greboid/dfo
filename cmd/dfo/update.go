@@ -14,6 +14,7 @@ import (
 var (
 	updateDryRun   bool
 	updateAutoPush bool
+	updateForce    bool
 )
 
 var updateCmd = &cobra.Command{
@@ -34,6 +35,7 @@ func init() {
 
 	updateCheckCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "Show what would be updated without making changes")
 	updateCheckCmd.Flags().BoolVar(&updateAutoPush, "push", false, "Automatically push updated containers to registry")
+	updateCheckCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "Force update all packages to latest version even if already up-to-date")
 	updateCheckCmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to signing key")
 	updateCheckCmd.Flags().StringVarP(&outputDir, "output", "o", "repo", "Output directory for packages")
 	updateCheckCmd.Flags().StringVar(&containerOutput, "container-output", "output", "Output directory for containers")
@@ -88,7 +90,7 @@ func runUpdateCheck(cmd *cobra.Command, args []string) error {
 	)
 
 	// Run update check
-	result, err := orchestrator.CheckAndUpdate(updateDryRun, updateAutoPush)
+	result, err := orchestrator.CheckAndUpdate(updateDryRun, updateAutoPush, updateForce)
 	if err != nil {
 		return fmt.Errorf("update check failed: %w", err)
 	}

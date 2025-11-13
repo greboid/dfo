@@ -83,7 +83,7 @@ func runCI(cmd *cobra.Command, args []string) error {
 			registryClient,
 		)
 
-		result, err := orchestrator.CheckAndUpdate(false, ciPush)
+		result, err := orchestrator.CheckAndUpdate(false, ciPush, false)
 		if err != nil {
 			return fmt.Errorf("update check failed: %w", err)
 		}

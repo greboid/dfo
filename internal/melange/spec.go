@@ -19,6 +19,9 @@ type Spec struct {
 
 	// Path to the YAML file
 	FilePath string `yaml:"-"`
+
+	// Raw YAML data for preserving structure when saving
+	rawData []byte `yaml:"-"`
 }
 
 // PackageInfo contains package metadata
@@ -58,11 +61,20 @@ type SubpackageInfo struct {
 
 // UpdateConfig contains version update configuration
 type UpdateConfig struct {
-	Enabled        bool              `yaml:"enabled"`
-	Shared         bool              `yaml:"shared,omitempty"`
-	Git            map[string]string `yaml:"git,omitempty"`
-	GitHubMonitor  map[string]string `yaml:"github,omitempty"`
-	ReleaseMonitor map[string]string `yaml:"release-monitor,omitempty"`
+	Enabled          bool               `yaml:"enabled"`
+	Shared           bool               `yaml:"shared,omitempty"`
+	Git              map[string]string  `yaml:"git,omitempty"`
+	GitHubMonitor    map[string]string  `yaml:"github,omitempty"`
+	ReleaseMonitor   map[string]string  `yaml:"release-monitor,omitempty"`
+	Postgres         map[string]string  `yaml:"postgres,omitempty"`
+	Go               map[string]string  `yaml:"go,omitempty"`
+	VersionTransform []VersionTransform `yaml:"version-transform,omitempty"`
+}
+
+// VersionTransform represents a regex-based version transformation
+type VersionTransform struct {
+	Match   string `yaml:"match"`
+	Replace string `yaml:"replace"`
 }
 
 // LoadSpec reads and parses a melange YAML file
@@ -78,6 +90,7 @@ func LoadSpec(path string) (*Spec, error) {
 	}
 
 	spec.FilePath = path
+	spec.rawData = data
 	return &spec, nil
 }
 
@@ -153,15 +166,69 @@ func LoadAllSpecs(packagesDir string) (map[string]*Spec, error) {
 	return specs, nil
 }
 
-// Save writes the spec back to its file
+// Save writes the spec back to its file, preserving all original content
 func (s *Spec) Save() error {
-	data, err := yaml.Marshal(s)
-	if err != nil {
-		return fmt.Errorf("failed to marshal spec: %w", err)
+	// Parse the original YAML as a node tree
+	var rootNode yaml.Node
+	if err := yaml.Unmarshal(s.rawData, &rootNode); err != nil {
+		return fmt.Errorf("failed to parse original YAML: %w", err)
 	}
 
+	// Find and update the package version and epoch
+	if err := s.updatePackageFields(&rootNode); err != nil {
+		return fmt.Errorf("failed to update package fields: %w", err)
+	}
+
+	// Marshal back to YAML
+	data, err := yaml.Marshal(&rootNode)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated YAML: %w", err)
+	}
+
+	// Write to file
 	if err := os.WriteFile(s.FilePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write spec file: %w", err)
+	}
+
+	return nil
+}
+
+// updatePackageFields finds and updates version and epoch in the YAML node tree
+func (s *Spec) updatePackageFields(node *yaml.Node) error {
+	// Navigate to the document node (root is usually a document node)
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		node = node.Content[0]
+	}
+
+	// Find the "package" mapping
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected mapping node at root")
+	}
+
+	for i := 0; i < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valueNode := node.Content[i+1]
+
+		if keyNode.Value == "package" && valueNode.Kind == yaml.MappingNode {
+			// Found the package mapping, update version and epoch
+			return s.updatePackageMapping(valueNode)
+		}
+	}
+
+	return fmt.Errorf("package section not found in YAML")
+}
+
+// updatePackageMapping updates version and epoch within the package mapping
+func (s *Spec) updatePackageMapping(packageNode *yaml.Node) error {
+	for i := 0; i < len(packageNode.Content); i += 2 {
+		keyNode := packageNode.Content[i]
+		valueNode := packageNode.Content[i+1]
+
+		if keyNode.Value == "version" {
+			valueNode.Value = s.Package.Version
+		} else if keyNode.Value == "epoch" {
+			valueNode.Value = fmt.Sprintf("%d", s.Package.Epoch)
+		}
 	}
 
 	return nil
