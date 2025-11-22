@@ -54,3 +54,30 @@ func BuildPackageList(packages []string) string {
 	}
 	return strings.Join(pkgArgs, " ")
 }
+
+func NormalizeShellLine(line string) (normalized string, hasContinuation bool) {
+	trimmedLine := strings.TrimSpace(line)
+	if trimmedLine == "" {
+		return "", false
+	}
+	hasContinuation = strings.HasSuffix(trimmedLine, "\\")
+	trimmedLine = strings.TrimRight(trimmedLine, "\\")
+	trimmedLine = strings.TrimSpace(trimmedLine)
+	trimmedLine = strings.TrimSuffix(trimmedLine, "&&")
+	trimmedLine = strings.TrimSpace(trimmedLine)
+	trimmedLine = strings.TrimSuffix(trimmedLine, ";")
+	trimmedLine = strings.TrimSpace(trimmedLine)
+
+	return trimmedLine, hasContinuation
+}
+
+func FormatShellLineWithContinuation(line, prefix string) string {
+	normalized, hasContinuation := NormalizeShellLine(line)
+	if normalized == "" {
+		return ""
+	}
+	if hasContinuation {
+		return fmt.Sprintf("%s%s \\\n", prefix, normalized)
+	}
+	return fmt.Sprintf("%s%s; \\\n", prefix, normalized)
+}

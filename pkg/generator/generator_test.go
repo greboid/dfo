@@ -366,7 +366,8 @@ func TestGenerateRunWithBuildDeps(t *testing.T) {
 			expected: `RUN apk add --no-cache --virtual .build-deps \
   {{- range $key, $value := alpine_packages "go"}}
   {{$key}}={{$value}} \
-  {{- end}}; \
+  {{- end}}
+  ; \
   go build -o /app/binary; \
   apk del --no-network .build-deps
 `,
@@ -378,7 +379,8 @@ func TestGenerateRunWithBuildDeps(t *testing.T) {
 			expected: `RUN apk add --no-cache --virtual .build-deps \
   {{- range $key, $value := alpine_packages "make" "gcc" "musl-dev"}}
   {{$key}}={{$value}} \
-  {{- end}}; \
+  {{- end}}
+  ; \
   make install; \
   apk del --no-network .build-deps
 `,
@@ -392,10 +394,30 @@ make install`,
 			expected: `RUN apk add --no-cache --virtual .build-deps \
   {{- range $key, $value := alpine_packages "make"}}
   {{$key}}={{$value}} \
-  {{- end}}; \
-  cd /build
-  make
+  {{- end}}
+  ; \
+  cd /build; \
+  make; \
   make install; \
+  apk del --no-network .build-deps
+`,
+		},
+		{
+			name: "multi-line with continuation backslash",
+			runCmd: `rm -rf \
+  /path/one \
+  /path/two
+echo done`,
+			buildDeps: []string{"make"},
+			expected: `RUN apk add --no-cache --virtual .build-deps \
+  {{- range $key, $value := alpine_packages "make"}}
+  {{$key}}={{$value}} \
+  {{- end}}
+  ; \
+  rm -rf \
+  /path/one \
+  /path/two; \
+  echo done; \
   apk del --no-network .build-deps
 `,
 		},
@@ -529,7 +551,8 @@ func TestGeneratePipelineStep(t *testing.T) {
 			expected: `RUN apk add --no-cache --virtual .build-deps \
   {{- range $key, $value := alpine_packages "go"}}
   {{$key}}={{$value}} \
-  {{- end}}; \
+  {{- end}}
+  ; \
   go build; \
   apk del --no-network .build-deps
 `,

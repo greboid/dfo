@@ -179,13 +179,15 @@ func MakeExecutable(params map[string]any) ([]Step, error) {
 }
 
 func buildExtractCommand(destination, extractDir string, stripComponents int) string {
+	mkdirCmd := fmt.Sprintf("mkdir -p %q", extractDir)
+
 	if strings.HasSuffix(destination, ".zip") {
-		return fmt.Sprintf("unzip -q %q -d %q", destination, extractDir)
+		return fmt.Sprintf("%s && unzip -q %q -d %q", mkdirCmd, destination, extractDir)
 	}
 
 	if isTarArchive(destination) {
-		return fmt.Sprintf("tar -xf %q -C %q --strip-components=%d",
-			destination, extractDir, stripComponents)
+		return fmt.Sprintf("%s && tar -xf %q -C %q --strip-components=%d",
+			mkdirCmd, destination, extractDir, stripComponents)
 	}
 
 	return fmt.Sprintf("echo \"Unsupported archive format: %s\" && exit 1", destination)
@@ -598,6 +600,10 @@ func SetupUsersGroups(params map[string]any) ([]Step, error) {
 	}
 
 	var commands []string
+
+	if rootfs != "" {
+		commands = append(commands, fmt.Sprintf("mkdir -p %s/etc", rootfs))
+	}
 
 	for _, group := range groups {
 		commands = append(commands,

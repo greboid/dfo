@@ -285,16 +285,12 @@ func (g *Generator) generateRunWithBuildDeps(runCmd string, buildDeps []string) 
 	b.WriteString("RUN apk add --no-cache --virtual .build-deps \\\n")
 	b.WriteString(fmt.Sprintf("  {{- range $key, $value := alpine_packages %s}}\n", pkgList))
 	b.WriteString("  {{$key}}={{$value}} \\\n")
-	b.WriteString("  {{- end}}; \\\n")
+	b.WriteString("  {{- end}}\n")
+	b.WriteString("  ; \\\n")
 
 	lines := strings.Split(strings.TrimSpace(runCmd), "\n")
-	for i, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-		if i < len(lines)-1 {
-			b.WriteString(fmt.Sprintf("  %s\n", trimmedLine))
-		} else {
-			b.WriteString(fmt.Sprintf("  %s; \\\n", trimmedLine))
-		}
+	for _, line := range lines {
+		b.WriteString(util.FormatShellLineWithContinuation(line, "  "))
 	}
 
 	b.WriteString("  apk del --no-network .build-deps\n")
@@ -341,50 +337,34 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 func (g *Generator) formatRunCommand(run string) string {
 	lines := strings.Split(run, "\n")
 
-	type processedLine struct {
-		content        string
-		isContinuation bool
-	}
-	var nonEmptyLines []processedLine
-
+	var nonEmptyLines []string
 	for _, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-		if trimmedLine != "" {
-			isContinuation := strings.HasSuffix(trimmedLine, "\\")
-
-			trimmedLine = strings.TrimRight(trimmedLine, "\\")
-			trimmedLine = strings.TrimSpace(trimmedLine)
-			trimmedLine = strings.TrimSuffix(trimmedLine, "&&")
-			trimmedLine = strings.TrimSpace(trimmedLine)
-			trimmedLine = strings.TrimSuffix(trimmedLine, ";")
-			trimmedLine = strings.TrimSpace(trimmedLine)
-
-			nonEmptyLines = append(nonEmptyLines, processedLine{
-				content:        trimmedLine,
-				isContinuation: isContinuation,
-			})
+		normalized, _ := util.NormalizeShellLine(line)
+		if normalized != "" {
+			nonEmptyLines = append(nonEmptyLines, line)
 		}
 	}
 
+	if len(nonEmptyLines) == 0 {
+		return ""
+	}
+
 	if len(nonEmptyLines) == 1 {
-		return fmt.Sprintf("RUN %s\n", nonEmptyLines[0].content)
+		normalized, _ := util.NormalizeShellLine(nonEmptyLines[0])
+		return fmt.Sprintf("RUN %s\n", normalized)
 	}
 
 	var b strings.Builder
 	b.Grow(256)
-	b.WriteString("RUN ")
 
 	for i, line := range nonEmptyLines {
-		if i < len(nonEmptyLines)-1 {
-			b.WriteString(line.content)
-			if line.isContinuation {
-				b.WriteString(" \\\n    ")
-			} else {
-				b.WriteString("; \\\n    ")
-			}
+		if i == 0 {
+			b.WriteString(util.FormatShellLineWithContinuation(line, "RUN "))
+		} else if i < len(nonEmptyLines)-1 {
+			b.WriteString(util.FormatShellLineWithContinuation(line, "    "))
 		} else {
-			b.WriteString(line.content)
-			b.WriteString("\n")
+			normalized, _ := util.NormalizeShellLine(line)
+			b.WriteString(fmt.Sprintf("    %s\n", normalized))
 		}
 	}
 

@@ -292,3 +292,152 @@ func TestBuildPackageList(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatShellLineWithContinuation(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		prefix   string
+		expected string
+	}{
+		{
+			name:     "simple command with prefix",
+			line:     "echo hello",
+			prefix:   "  ",
+			expected: "  echo hello; \\\n",
+		},
+		{
+			name:     "command with trailing semicolon",
+			line:     "set -eux;",
+			prefix:   "  ",
+			expected: "  set -eux; \\\n",
+		},
+		{
+			name:     "command with continuation backslash",
+			line:     "rm -rf \\",
+			prefix:   "  ",
+			expected: "  rm -rf \\\n",
+		},
+		{
+			name:     "empty line returns empty",
+			line:     "",
+			prefix:   "  ",
+			expected: "",
+		},
+		{
+			name:     "whitespace only returns empty",
+			line:     "   ",
+			prefix:   "  ",
+			expected: "",
+		},
+		{
+			name:     "RUN prefix",
+			line:     "make install",
+			prefix:   "RUN ",
+			expected: "RUN make install; \\\n",
+		},
+		{
+			name:     "continuation with RUN prefix",
+			line:     "rm -rf \\",
+			prefix:   "RUN ",
+			expected: "RUN rm -rf \\\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatShellLineWithContinuation(tt.line, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestNormalizeShellLine(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedNorm    string
+		expectedHasCont bool
+	}{
+		{
+			name:            "simple command",
+			input:           "echo hello",
+			expectedNorm:    "echo hello",
+			expectedHasCont: false,
+		},
+		{
+			name:            "command with trailing semicolon",
+			input:           "set -eux;",
+			expectedNorm:    "set -eux",
+			expectedHasCont: false,
+		},
+		{
+			name:            "command with trailing backslash",
+			input:           "echo hello \\",
+			expectedNorm:    "echo hello",
+			expectedHasCont: true,
+		},
+		{
+			name:            "command with trailing &&",
+			input:           "apt-get update &&",
+			expectedNorm:    "apt-get update",
+			expectedHasCont: false,
+		},
+		{
+			name:            "command with semicolon and backslash",
+			input:           "set -eux; \\",
+			expectedNorm:    "set -eux",
+			expectedHasCont: true,
+		},
+		{
+			name:            "empty string",
+			input:           "",
+			expectedNorm:    "",
+			expectedHasCont: false,
+		},
+		{
+			name:            "whitespace only",
+			input:           "   ",
+			expectedNorm:    "",
+			expectedHasCont: false,
+		},
+		{
+			name:            "command with leading/trailing whitespace",
+			input:           "  echo hello  ",
+			expectedNorm:    "echo hello",
+			expectedHasCont: false,
+		},
+		{
+			name:            "command with && and backslash",
+			input:           "apt-get update && \\",
+			expectedNorm:    "apt-get update",
+			expectedHasCont: true,
+		},
+		{
+			name:            "rm -rf with escaped semicolons in paths",
+			input:           "rm -rf /path/to/dir",
+			expectedNorm:    "rm -rf /path/to/dir",
+			expectedHasCont: false,
+		},
+		{
+			name:            "complex command preserves internal semicolons",
+			input:           "for i in 1 2 3; do echo $i; done",
+			expectedNorm:    "for i in 1 2 3; do echo $i; done",
+			expectedHasCont: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normalized, hasContinuation := NormalizeShellLine(tt.input)
+			if normalized != tt.expectedNorm {
+				t.Errorf("normalized: expected %q, got %q", tt.expectedNorm, normalized)
+			}
+			if hasContinuation != tt.expectedHasCont {
+				t.Errorf("hasContinuation: expected %v, got %v", tt.expectedHasCont, hasContinuation)
+			}
+		})
+	}
+}
