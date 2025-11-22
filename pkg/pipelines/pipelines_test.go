@@ -764,7 +764,7 @@ func TestCloneAndBuildMake(t *testing.T) {
 				if !strings.Contains(steps[0].Content, "git clone") {
 					t.Errorf("expected git clone in step 0, got: %s", steps[0].Content)
 				}
-				if !strings.Contains(steps[1].Content, "find /src -type f -executable -exec strip") {
+				if !strings.Contains(steps[1].Content, "find /src/example/makerepo -type f -executable -exec strip") {
 					t.Errorf("expected strip command in step 1, got: %s", steps[1].Content)
 				}
 			},

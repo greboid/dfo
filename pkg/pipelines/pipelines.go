@@ -319,11 +319,16 @@ func CloneAndBuildGo(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
+	workdir := "/src"
+	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
+		workdir = "/src/" + ownerRepo
+	}
+
 	return []Step{
-		generateCloneStep(repo, tag, "", "/src"),
+		generateCloneStep(repo, tag, "", workdir),
 		{
 			Name:    "Download dependencies",
-			Content: "WORKDIR /src\nRUN go mod download\n",
+			Content: fmt.Sprintf("WORKDIR %s\nRUN go mod download\n", workdir),
 		},
 		{
 			Name:    "Build binary",
@@ -346,7 +351,12 @@ func BuildGoStatic(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", "/src")
+	defaultWorkdir := "/src"
+	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
+		defaultWorkdir = "/src/" + ownerRepo
+	}
+
+	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +417,12 @@ func CloneAndBuildRust(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", "/src")
+	defaultWorkdir := "/src"
+	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
+		defaultWorkdir = "/src/" + ownerRepo
+	}
+
+	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
 	if err != nil {
 		return nil, err
 	}
@@ -469,7 +484,12 @@ func CloneAndBuildMake(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", "/src")
+	defaultWorkdir := "/src"
+	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
+		defaultWorkdir = "/src/" + ownerRepo
+	}
+
+	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +538,12 @@ func CloneAndBuildAutoconf(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", "/src")
+	defaultWorkdir := "/src"
+	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
+		defaultWorkdir = "/src/" + ownerRepo
+	}
+
+	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
 	if err != nil {
 		return nil, err
 	}
