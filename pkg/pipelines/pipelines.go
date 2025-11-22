@@ -242,6 +242,36 @@ func extractGitHubOwnerRepo(repoURL string) string {
 	return ""
 }
 
+func extractRepoWorkdir(repo string, params map[string]any) (string, error) {
+	defaultWorkdir := "/src"
+	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
+		defaultWorkdir = "/src/" + ownerRepo
+	}
+	return util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
+}
+
+func generateMakeStep(workdir string, makeSteps []string) Step {
+	makeCmd := strings.Join(makeSteps, "; \\\n    ")
+	return Step{
+		Name:    "Build with make",
+		Content: fmt.Sprintf("WORKDIR %s\nRUN %s\n", workdir, makeCmd),
+	}
+}
+
+func generateStripStep(workdir string) Step {
+	return Step{
+		Name:    "Strip binaries",
+		Content: fmt.Sprintf("RUN find %s -type f -executable -exec strip {} + 2>/dev/null || true\n", workdir),
+	}
+}
+
+func generateGoModDownloadStep(workdir string) Step {
+	return Step{
+		Name:    "Download dependencies",
+		Content: fmt.Sprintf("WORKDIR %s\nRUN go mod download\n", workdir),
+	}
+}
+
 func generateCloneStep(repo, tag, commit, workdir string) Step {
 	var cloneCmd string
 	if commit != "" {
@@ -344,17 +374,14 @@ func CloneAndBuildGo(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	workdir := "/src"
-	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
-		workdir = "/src/" + ownerRepo
+	workdir, err := extractRepoWorkdir(repo, params)
+	if err != nil {
+		return nil, err
 	}
 
 	return []Step{
 		generateCloneStep(repo, tag, "", workdir),
-		{
-			Name:    "Download dependencies",
-			Content: fmt.Sprintf("WORKDIR %s\nRUN go mod download\n", workdir),
-		},
+		generateGoModDownloadStep(workdir),
 		generateGoBuildStep(pkg, output, ""),
 		generateLicenseStep(pkg, output, ""),
 	}, nil
@@ -370,12 +397,7 @@ func BuildGo(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	defaultWorkdir := "/src"
-	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
-		defaultWorkdir = "/src/" + ownerRepo
-	}
-
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
+	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
 		return nil, err
 	}
@@ -401,10 +423,7 @@ func BuildGo(params map[string]any) ([]Step, error) {
 
 	return []Step{
 		generateCloneStep(repo, tag, "", workdir),
-		{
-			Name:    "Download dependencies",
-			Content: fmt.Sprintf("WORKDIR %s\nRUN go mod download\n", workdir),
-		},
+		generateGoModDownloadStep(workdir),
 		generateGoBuildStep(pkg, output, ""),
 		generateLicenseStep(pkg, output, ignore),
 	}, nil
@@ -420,12 +439,7 @@ func CloneAndBuildRust(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	defaultWorkdir := "/src"
-	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
-		defaultWorkdir = "/src/" + ownerRepo
-	}
-
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
+	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
 		return nil, err
 	}
@@ -487,12 +501,7 @@ func CloneAndBuildMake(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	defaultWorkdir := "/src"
-	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
-		defaultWorkdir = "/src/" + ownerRepo
-	}
-
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
+	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
 		return nil, err
 	}
@@ -514,18 +523,11 @@ func CloneAndBuildMake(params map[string]any) ([]Step, error) {
 	}
 
 	if len(makeSteps) > 0 {
-		makeCmd := strings.Join(makeSteps, "; \\\n    ")
-		steps = append(steps, Step{
-			Name:    "Build with make",
-			Content: fmt.Sprintf("WORKDIR %s\nRUN %s\n", workdir, makeCmd),
-		})
+		steps = append(steps, generateMakeStep(workdir, makeSteps))
 	}
 
 	if strip {
-		steps = append(steps, Step{
-			Name:    "Strip binaries",
-			Content: fmt.Sprintf("RUN find %s -type f -executable -exec strip {} + 2>/dev/null || true\n", workdir),
-		})
+		steps = append(steps, generateStripStep(workdir))
 	}
 
 	return steps, nil
@@ -541,12 +543,7 @@ func CloneAndBuildAutoconf(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	defaultWorkdir := "/src"
-	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
-		defaultWorkdir = "/src/" + ownerRepo
-	}
-
-	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
+	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
 		return nil, err
 	}
@@ -578,18 +575,14 @@ func CloneAndBuildAutoconf(params map[string]any) ([]Step, error) {
 	})
 
 	if len(makeSteps) > 0 {
-		makeCmd := strings.Join(makeSteps, "; \\\n    ")
 		steps = append(steps, Step{
 			Name:    "Build with make",
-			Content: fmt.Sprintf("RUN %s\n", makeCmd),
+			Content: fmt.Sprintf("RUN %s\n", strings.Join(makeSteps, "; \\\n    ")),
 		})
 	}
 
 	if strip {
-		steps = append(steps, Step{
-			Name:    "Strip binaries",
-			Content: fmt.Sprintf("RUN find %s -type f -executable -exec strip {} + 2>/dev/null || true\n", workdir),
-		})
+		steps = append(steps, generateStripStep(workdir))
 	}
 
 	return steps, nil
