@@ -61,14 +61,15 @@ func NormalizeShellLine(line string) (normalized string, hasContinuation bool) {
 		return "", false
 	}
 	hasContinuation = strings.HasSuffix(trimmedLine, "\\")
-	trimmedLine = strings.TrimRight(trimmedLine, "\\")
-	trimmedLine = strings.TrimSpace(trimmedLine)
+	if hasContinuation {
+		return trimmedLine, true
+	}
 	trimmedLine = strings.TrimSuffix(trimmedLine, "&&")
 	trimmedLine = strings.TrimSpace(trimmedLine)
 	trimmedLine = strings.TrimSuffix(trimmedLine, ";")
 	trimmedLine = strings.TrimSpace(trimmedLine)
 
-	return trimmedLine, hasContinuation
+	return trimmedLine, false
 }
 
 func FormatShellLineWithContinuation(line, prefix string) string {
@@ -77,7 +78,7 @@ func FormatShellLineWithContinuation(line, prefix string) string {
 		return ""
 	}
 	if hasContinuation {
-		return fmt.Sprintf("%s%s \\\n", prefix, normalized)
+		return fmt.Sprintf("%s%s\n", prefix, normalized)
 	}
 	return fmt.Sprintf("%s%s; \\\n", prefix, normalized)
 }

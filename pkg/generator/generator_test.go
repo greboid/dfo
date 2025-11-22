@@ -154,7 +154,7 @@ echo done`,
 			input: `echo start && \
 echo middle && \
 echo end`,
-			expected: "RUN echo start \\\n    echo middle \\\n    echo end\n",
+			expected: "RUN echo start && \\\n    echo middle && \\\n    echo end\n",
 		},
 		{
 			name: "multi-line with trailing semicolons",

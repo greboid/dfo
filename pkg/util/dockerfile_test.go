@@ -376,7 +376,7 @@ func TestNormalizeShellLine(t *testing.T) {
 		{
 			name:            "command with trailing backslash",
 			input:           "echo hello \\",
-			expectedNorm:    "echo hello",
+			expectedNorm:    "echo hello \\",
 			expectedHasCont: true,
 		},
 		{
@@ -388,7 +388,7 @@ func TestNormalizeShellLine(t *testing.T) {
 		{
 			name:            "command with semicolon and backslash",
 			input:           "set -eux; \\",
-			expectedNorm:    "set -eux",
+			expectedNorm:    "set -eux; \\",
 			expectedHasCont: true,
 		},
 		{
@@ -412,7 +412,7 @@ func TestNormalizeShellLine(t *testing.T) {
 		{
 			name:            "command with && and backslash",
 			input:           "apt-get update && \\",
-			expectedNorm:    "apt-get update",
+			expectedNorm:    "apt-get update && \\",
 			expectedHasCont: true,
 		},
 		{
