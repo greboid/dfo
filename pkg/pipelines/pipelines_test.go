@@ -584,9 +584,9 @@ func TestBuildGoStatic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			steps, err := BuildGoStatic(tt.params)
+			steps, err := BuildGo(tt.params)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("BuildGoStatic() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("BuildGo() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr && tt.check != nil {

@@ -21,7 +21,7 @@ var Registry = map[string]Pipeline{
 	"make-executable":          MakeExecutable,
 	"clone":                    Clone,
 	"clone-and-build-go":       CloneAndBuildGo,
-	"build-go-static":          BuildGoStatic,
+	"build-go-static":          BuildGo,
 	"clone-and-build-rust":     CloneAndBuildRust,
 	"clone-and-build-make":     CloneAndBuildMake,
 	"clone-and-build-autoconf": CloneAndBuildAutoconf,
@@ -294,6 +294,31 @@ func Clone(params map[string]any) ([]Step, error) {
 	return []Step{generateCloneStep(repo, tag, commit, workdir)}, nil
 }
 
+func generateGoBuildStep(pkg, output, extraLdflags string) Step {
+	ldflags := `-s -w -extldflags "-static"`
+	if extraLdflags != "" {
+		ldflags += " " + extraLdflags
+	}
+	return Step{
+		Name:    "Build binary",
+		Content: fmt.Sprintf("RUN CGO_ENABLED=0 go build -trimpath -ldflags='%s' -o %s %s\n", ldflags, output, pkg),
+	}
+}
+
+func generateLicenseStep(pkg, output, ignore string) Step {
+	noticesPath := "/notices" + output
+	var licenseCmd string
+	if ignore != "" {
+		licenseCmd = fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=%s --ignore %s\n", pkg, noticesPath, ignore)
+	} else {
+		licenseCmd = fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=%s\n", pkg, noticesPath)
+	}
+	return Step{
+		Name:    "Generate license notices",
+		Content: licenseCmd,
+	}
+}
+
 func CloneAndBuildGo(params map[string]any) ([]Step, error) {
 	if err := ValidateParams("clone-and-build-go", params); err != nil {
 		return nil, err
@@ -330,18 +355,12 @@ func CloneAndBuildGo(params map[string]any) ([]Step, error) {
 			Name:    "Download dependencies",
 			Content: fmt.Sprintf("WORKDIR %s\nRUN go mod download\n", workdir),
 		},
-		{
-			Name:    "Build binary",
-			Content: fmt.Sprintf("RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o %s %s\n", output, pkg),
-		},
-		{
-			Name:    "Generate license notices",
-			Content: fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=/notices\n", pkg),
-		},
+		generateGoBuildStep(pkg, output, ""),
+		generateLicenseStep(pkg, output, ""),
 	}, nil
 }
 
-func BuildGoStatic(params map[string]any) ([]Step, error) {
+func BuildGo(params map[string]any) ([]Step, error) {
 	if err := ValidateParams("build-go-static", params); err != nil {
 		return nil, err
 	}
@@ -380,31 +399,15 @@ func BuildGoStatic(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
-	steps := []Step{
+	return []Step{
 		generateCloneStep(repo, tag, "", workdir),
 		{
 			Name:    "Download dependencies",
 			Content: fmt.Sprintf("WORKDIR %s\nRUN go mod download\n", workdir),
 		},
-		{
-			Name:    "Build binary",
-			Content: fmt.Sprintf("RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -extldflags \"-static\"' -o %s %s\n", output, pkg),
-		},
-	}
-
-	var licenseCmd string
-	if ignore != "" {
-		licenseCmd = fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=/notices --ignore %s\n", pkg, ignore)
-	} else {
-		licenseCmd = fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=/notices\n", pkg)
-	}
-
-	steps = append(steps, Step{
-		Name:    "Generate license notices",
-		Content: licenseCmd,
-	})
-
-	return steps, nil
+		generateGoBuildStep(pkg, output, ""),
+		generateLicenseStep(pkg, output, ignore),
+	}, nil
 }
 
 func CloneAndBuildRust(params map[string]any) ([]Step, error) {
