@@ -198,6 +198,30 @@ func TestValidate(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			name: "stage name with space",
+			config: &BuildConfig{
+				Package: Package{Name: "test-package"},
+				Stages: []Stage{{
+					Name:        "build stage",
+					Environment: Environment{BaseImage: "alpine"},
+				}},
+			},
+			expectError: true,
+			errorMsg:    "name must be a single word",
+		},
+		{
+			name: "empty stage name",
+			config: &BuildConfig{
+				Package: Package{Name: "test-package"},
+				Stages: []Stage{{
+					Name:        "",
+					Environment: Environment{BaseImage: "alpine"},
+				}},
+			},
+			expectError: true,
+			errorMsg:    "stage name is required",
+		},
 	}
 
 	for _, tt := range tests {
@@ -260,6 +284,40 @@ func TestValidateStage(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "my-special-stage",
+		},
+		{
+			name:        "empty stage name",
+			stage:       Stage{Name: "", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+			errorMsg:    "stage name is required",
+		},
+		{
+			name:        "stage name with space",
+			stage:       Stage{Name: "build stage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+			errorMsg:    "name must be a single word",
+		},
+		{
+			name:        "stage name with tab",
+			stage:       Stage{Name: "build\tstage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+			errorMsg:    "name must be a single word",
+		},
+		{
+			name:        "stage name with newline",
+			stage:       Stage{Name: "build\nstage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+			errorMsg:    "name must be a single word",
+		},
+		{
+			name:        "valid stage name with hyphen",
+			stage:       Stage{Name: "build-stage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: false,
+		},
+		{
+			name:        "valid stage name with underscore",
+			stage:       Stage{Name: "build_stage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: false,
 		},
 	}
 

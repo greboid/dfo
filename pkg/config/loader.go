@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -52,6 +53,13 @@ func Validate(config *BuildConfig) error {
 }
 
 func validateStage(stage Stage) error {
+	if stage.Name == "" {
+		return fmt.Errorf("stage name is required")
+	}
+	if strings.ContainsAny(stage.Name, " \t\n\r") {
+		return fmt.Errorf("stage %q: name must be a single word (no whitespace allowed)", stage.Name)
+	}
+
 	hasBaseImage := stage.Environment.BaseImage != ""
 	hasExternalImage := stage.Environment.ExternalImage != ""
 
