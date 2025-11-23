@@ -89,6 +89,9 @@ var Signatures = map[string]PipelineSignature{
 			"package": {Type: TypeString, Required: false, Description: "Go package to build (default: .)"},
 			"output":  {Type: TypeString, Required: false, Description: "Output binary path (default: /main)"},
 			"tag":     {Type: TypeString, Required: false, Description: "Tag or branch to checkout"},
+			"go-tags": {Type: TypeString, Required: false, Description: "Additional Go build tags (default: netgo,osusergo)"},
+			"cgo":     {Type: TypeBool, Required: false, Description: "Enable CGO (default: true)"},
+			"ignore":  {Type: TypeString, Required: false, Description: "Packages to ignore for license generation"},
 		},
 	},
 	"build-go-static": {
@@ -101,6 +104,8 @@ var Signatures = map[string]PipelineSignature{
 			"output":  {Type: TypeString, Required: false, Description: "Output binary path (default: /main)"},
 			"ignore":  {Type: TypeString, Required: false, Description: "Packages to ignore for license generation"},
 			"tag":     {Type: TypeString, Required: false, Description: "Tag or branch to checkout"},
+			"go-tags": {Type: TypeString, Required: false, Description: "Additional Go build tags (default: netgo,osusergo)"},
+			"cgo":     {Type: TypeBool, Required: false, Description: "Enable CGO (default: true)"},
 		},
 	},
 	"clone-and-build-rust": {

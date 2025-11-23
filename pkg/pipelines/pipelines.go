@@ -324,14 +324,22 @@ func Clone(params map[string]any) ([]Step, error) {
 	return []Step{generateCloneStep(repo, tag, commit, workdir)}, nil
 }
 
-func generateGoBuildStep(pkg, output, extraLdflags string) Step {
+func generateGoBuildStep(pkg, output, extraLdflags, extraTags string, cgo bool) Step {
 	ldflags := `-s -w -extldflags "-static"`
 	if extraLdflags != "" {
 		ldflags += " " + extraLdflags
 	}
+	tags := "netgo,osusergo"
+	if extraTags != "" {
+		tags += "," + extraTags
+	}
+	cgoEnabled := "1"
+	if !cgo {
+		cgoEnabled = "0"
+	}
 	return Step{
 		Name:    "Build binary",
-		Content: fmt.Sprintf("RUN CGO_ENABLED=0 go build -trimpath -ldflags='%s' -o %s %s\n", ldflags, output, pkg),
+		Content: fmt.Sprintf("RUN CGO_ENABLED=%s go build -trimpath -tags '%s' -ldflags='%s' -o %s %s\n", cgoEnabled, tags, ldflags, output, pkg),
 	}
 }
 
@@ -374,6 +382,21 @@ func CloneAndBuildGo(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
+	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
+	if err != nil {
+		return nil, err
+	}
+
+	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
+	if err != nil {
+		return nil, err
+	}
+
+	ignore, err := util.ValidateOptionalStringParamStrict(params, "ignore", "")
+	if err != nil {
+		return nil, err
+	}
+
 	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
 		return nil, err
@@ -382,8 +405,8 @@ func CloneAndBuildGo(params map[string]any) ([]Step, error) {
 	return []Step{
 		generateCloneStep(repo, tag, "", workdir),
 		generateGoModDownloadStep(workdir),
-		generateGoBuildStep(pkg, output, ""),
-		generateLicenseStep(pkg, output, ""),
+		generateGoBuildStep(pkg, output, "", goTags, cgo),
+		generateLicenseStep(pkg, output, ignore),
 	}, nil
 }
 
@@ -421,10 +444,20 @@ func BuildGo(params map[string]any) ([]Step, error) {
 		return nil, err
 	}
 
+	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
+	if err != nil {
+		return nil, err
+	}
+
+	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
+	if err != nil {
+		return nil, err
+	}
+
 	return []Step{
 		generateCloneStep(repo, tag, "", workdir),
 		generateGoModDownloadStep(workdir),
-		generateGoBuildStep(pkg, output, ""),
+		generateGoBuildStep(pkg, output, "", goTags, cgo),
 		generateLicenseStep(pkg, output, ignore),
 	}, nil
 }
