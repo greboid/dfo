@@ -1811,6 +1811,185 @@ func TestArchiveFormatValidation(t *testing.T) {
 	}
 }
 
+func TestGeneratePatchSteps(t *testing.T) {
+	tests := []struct {
+		name    string
+		patches []string
+		workdir string
+		check   func(*testing.T, []Step)
+	}{
+		{
+			name:    "empty patches",
+			patches: []string{},
+			workdir: "/src",
+			check: func(t *testing.T, steps []Step) {
+				if len(steps) != 0 {
+					t.Errorf("expected 0 steps for empty patches, got %d", len(steps))
+				}
+			},
+		},
+		{
+			name:    "single patch",
+			patches: []string{"fix.patch"},
+			workdir: "/src/project",
+			check: func(t *testing.T, steps []Step) {
+				if len(steps) != 1 {
+					t.Errorf("expected 1 step, got %d", len(steps))
+				}
+				if !strings.Contains(steps[0].Name, "Apply patch fix.patch") {
+					t.Errorf("expected patch name in step name, got: %s", steps[0].Name)
+				}
+				if !strings.Contains(steps[0].Content, "COPY fix.patch /src/project/") {
+					t.Errorf("expected COPY command, got: %s", steps[0].Content)
+				}
+				if !strings.Contains(steps[0].Content, "cd /src/project && patch -p1 < fix.patch") {
+					t.Errorf("expected patch command, got: %s", steps[0].Content)
+				}
+			},
+		},
+		{
+			name:    "multiple patches",
+			patches: []string{"fix1.diff", "fix2.diff", "fix3.diff"},
+			workdir: "/build",
+			check: func(t *testing.T, steps []Step) {
+				if len(steps) != 3 {
+					t.Errorf("expected 3 steps, got %d", len(steps))
+				}
+				for i, patch := range []string{"fix1.diff", "fix2.diff", "fix3.diff"} {
+					if !strings.Contains(steps[i].Name, patch) {
+						t.Errorf("step %d: expected patch name %s in step name, got: %s", i, patch, steps[i].Name)
+					}
+					if !strings.Contains(steps[i].Content, "COPY "+patch+" /build/") {
+						t.Errorf("step %d: expected COPY command for %s, got: %s", i, patch, steps[i].Content)
+					}
+					if !strings.Contains(steps[i].Content, "patch -p1 < "+patch) {
+						t.Errorf("step %d: expected patch command for %s, got: %s", i, patch, steps[i].Content)
+					}
+				}
+			},
+		},
+		{
+			name:    "patches with subdirectory paths",
+			patches: []string{"patches/security-fix.patch", "local/build-fix.diff"},
+			workdir: "/src",
+			check: func(t *testing.T, steps []Step) {
+				if len(steps) != 2 {
+					t.Errorf("expected 2 steps, got %d", len(steps))
+				}
+				if !strings.Contains(steps[0].Content, "COPY patches/security-fix.patch /src/") {
+					t.Errorf("expected COPY with full path, got: %s", steps[0].Content)
+				}
+				if !strings.Contains(steps[0].Content, "patch -p1 < patches/security-fix.patch") {
+					t.Errorf("expected patch with full path, got: %s", steps[0].Content)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			steps := generatePatchSteps(tt.patches, tt.workdir)
+			tt.check(t, steps)
+		})
+	}
+}
+
+func TestCloneAndBuildGoWithPatches(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]any
+		wantErr bool
+		check   func(*testing.T, PipelineResult)
+	}{
+		{
+			name: "with patches as array",
+			params: map[string]any{
+				"repo": "https://github.com/example/gorepo",
+				"patches": []any{
+					"fix1.patch",
+					"fix2.patch",
+				},
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				if len(steps) != 6 {
+					t.Errorf("expected 6 steps (clone + 2 patches + mod download + build + license), got %d", len(steps))
+				}
+				if !strings.Contains(steps[1].Content, "fix1.patch") {
+					t.Errorf("expected first patch step, got: %s", steps[1].Content)
+				}
+				if !strings.Contains(steps[2].Content, "fix2.patch") {
+					t.Errorf("expected second patch step, got: %s", steps[2].Content)
+				}
+				if !strings.Contains(steps[1].Content, "patch -p1") {
+					t.Errorf("expected patch command, got: %s", steps[1].Content)
+				}
+				// Verify patch is in build deps
+				hasPatch := false
+				for _, dep := range result.BuildDeps {
+					if dep == "patch" {
+						hasPatch = true
+						break
+					}
+				}
+				if !hasPatch {
+					t.Errorf("expected 'patch' in BuildDeps, got: %v", result.BuildDeps)
+				}
+			},
+		},
+		{
+			name: "with single patch as string",
+			params: map[string]any{
+				"repo":    "https://github.com/example/gorepo",
+				"patches": "single.patch",
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				if len(steps) != 5 {
+					t.Errorf("expected 5 steps (clone + patch + mod download + build + license), got %d", len(steps))
+				}
+				if !strings.Contains(steps[1].Content, "single.patch") {
+					t.Errorf("expected patch step, got: %s", steps[1].Content)
+				}
+			},
+		},
+		{
+			name: "without patches - no patch in deps",
+			params: map[string]any{
+				"repo": "https://github.com/example/gorepo",
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				if len(steps) != 4 {
+					t.Errorf("expected 4 steps (clone + mod download + build + license), got %d", len(steps))
+				}
+				// Verify patch is NOT in build deps
+				for _, dep := range result.BuildDeps {
+					if dep == "patch" {
+						t.Errorf("unexpected 'patch' in BuildDeps when no patches specified")
+					}
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := CloneAndBuildGo(tt.params)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CloneAndBuildGo() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
 func TestCopyFiles(t *testing.T) {
 	tests := []struct {
 		name    string

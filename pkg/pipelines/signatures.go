@@ -92,6 +92,7 @@ var Signatures = map[string]PipelineSignature{
 			"go-tags": {Type: TypeString, Required: false, Description: "Additional Go build tags (default: netgo,osusergo)"},
 			"cgo":     {Type: TypeBool, Required: false, Description: "Enable CGO (default: true)"},
 			"ignore":  {Type: TypeString, Required: false, Description: "Packages to ignore for license generation"},
+			"patches": {Type: TypeStringArray, Required: false, Description: "Patch files to apply"},
 		},
 	},
 	"build-go-static": {

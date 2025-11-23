@@ -288,6 +288,17 @@ func generateStripStep(workdir string) Step {
 	}
 }
 
+func generatePatchSteps(patches []string, workdir string) []Step {
+	var steps []Step
+	for _, patch := range patches {
+		steps = append(steps, Step{
+			Name:    fmt.Sprintf("Apply patch %s", patch),
+			Content: fmt.Sprintf("COPY %s %s/\nRUN cd %s && patch -p1 < %s\n", patch, workdir, workdir, patch),
+		})
+	}
+	return steps
+}
+
 func generateGoModDownloadStep(workdir string) Step {
 	return Step{
 		Name:    "Download dependencies",
@@ -428,14 +439,27 @@ func CloneAndBuildGo(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
+	patches := util.ExtractStringSlice(params, "patches")
+
+	steps := []Step{
+		generateCloneStep(repo, tag, "", workdir),
+	}
+
+	buildDeps := []string{"git", "go"}
+	if len(patches) > 0 {
+		buildDeps = append(buildDeps, "patch")
+		steps = append(steps, generatePatchSteps(patches, workdir)...)
+	}
+
+	steps = append(steps,
+		generateGoModDownloadStep(workdir),
+		generateGoBuildStep(pkg, output, "", goTags, cgo),
+		generateLicenseStep(pkg, output, ignore),
+	)
+
 	return PipelineResult{
-		Steps: []Step{
-			generateCloneStep(repo, tag, "", workdir),
-			generateGoModDownloadStep(workdir),
-			generateGoBuildStep(pkg, output, "", goTags, cgo),
-			generateLicenseStep(pkg, output, ignore),
-		},
-		BuildDeps: []string{"git", "go"},
+		Steps:     steps,
+		BuildDeps: buildDeps,
 	}, nil
 }
 
@@ -529,16 +553,10 @@ func CloneAndBuildRust(params map[string]any) (PipelineResult, error) {
 		generateCloneStep(repo, tag, "", workdir),
 	}
 
-	buildDeps := []string{"busybox", "git", "cargo", "rust"}
+	buildDeps := []string{"busybox", "git", "cargo", "rust", "make"}
 	if len(patches) > 0 {
 		buildDeps = append(buildDeps, "patch")
-	}
-
-	for _, patch := range patches {
-		steps = append(steps, Step{
-			Name:    fmt.Sprintf("Apply patch %s", patch),
-			Content: fmt.Sprintf("COPY %s %s/\nRUN cd %s && patch -p1 < %s\n", patch, workdir, workdir, patch),
-		})
+		steps = append(steps, generatePatchSteps(patches, workdir)...)
 	}
 
 	var buildCmd string
