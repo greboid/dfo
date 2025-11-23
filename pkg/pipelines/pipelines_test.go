@@ -10,7 +10,7 @@ func TestCreateUser(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "valid parameters",
@@ -20,15 +20,15 @@ func TestCreateUser(t *testing.T) {
 				"gid":      1000,
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
-				if len(steps) != 1 {
-					t.Errorf("expected 1 step, got %d", len(steps))
+			check: func(t *testing.T, result PipelineResult) {
+				if len(result.Steps) != 1 {
+					t.Errorf("expected 1 step, got %d", len(result.Steps))
 				}
-				if !strings.Contains(steps[0].Content, "addgroup -g 1000 appuser") {
-					t.Errorf("expected addgroup command, got: %s", steps[0].Content)
+				if !strings.Contains(result.Steps[0].Content, "addgroup -g 1000 appuser") {
+					t.Errorf("expected addgroup command, got: %s", result.Steps[0].Content)
 				}
-				if !strings.Contains(steps[0].Content, "adduser -D -u 1000 -G appuser appuser") {
-					t.Errorf("expected adduser command, got: %s", steps[0].Content)
+				if !strings.Contains(result.Steps[0].Content, "adduser -D -u 1000 -G appuser appuser") {
+					t.Errorf("expected adduser command, got: %s", result.Steps[0].Content)
 				}
 			},
 		},
@@ -52,13 +52,13 @@ func TestCreateUser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			steps, err := CreateUser(tt.params)
+			result, err := CreateUser(tt.params)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateUser() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr && tt.check != nil {
-				tt.check(t, steps)
+				tt.check(t, result)
 			}
 		})
 	}
@@ -69,7 +69,7 @@ func TestSetOwnership(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "valid parameters",
@@ -79,12 +79,12 @@ func TestSetOwnership(t *testing.T) {
 				"path":  "/app",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
-				if len(steps) != 1 {
-					t.Errorf("expected 1 step, got %d", len(steps))
+			check: func(t *testing.T, result PipelineResult) {
+				if len(result.Steps) != 1 {
+					t.Errorf("expected 1 step, got %d", len(result.Steps))
 				}
-				if !strings.Contains(steps[0].Content, "chown -R appuser:appgroup /app") {
-					t.Errorf("expected chown command, got: %s", steps[0].Content)
+				if !strings.Contains(result.Steps[0].Content, "chown -R appuser:appgroup /app") {
+					t.Errorf("expected chown command, got: %s", result.Steps[0].Content)
 				}
 			},
 		},
@@ -116,13 +116,13 @@ func TestSetOwnership(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			steps, err := SetOwnership(tt.params)
+			result, err := SetOwnership(tt.params)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("SetOwnership() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr && tt.check != nil {
-				tt.check(t, steps)
+				tt.check(t, result)
 			}
 		})
 	}
@@ -133,7 +133,7 @@ func TestDownloadVerifyExtract(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "download and verify only",
@@ -143,7 +143,8 @@ func TestDownloadVerifyExtract(t *testing.T) {
 				"checksum":    "abc123",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -168,7 +169,8 @@ func TestDownloadVerifyExtract(t *testing.T) {
 				"strip-components": 1,
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -198,7 +200,8 @@ func TestDownloadVerifyExtract(t *testing.T) {
 				"extract-dir": "/opt/app",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -315,7 +318,8 @@ func TestDownloadVerifyExtract(t *testing.T) {
 				"checksum-pattern": "file.tar.gz",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -332,7 +336,8 @@ func TestDownloadVerifyExtract(t *testing.T) {
 				"checksum-url": "https://example.com/checksum.txt",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -362,7 +367,7 @@ func TestMakeExecutable(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "valid parameters",
@@ -370,7 +375,8 @@ func TestMakeExecutable(t *testing.T) {
 				"path": "/usr/local/bin/app",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -426,7 +432,7 @@ func TestCloneAndBuildGo(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "minimal parameters",
@@ -434,7 +440,8 @@ func TestCloneAndBuildGo(t *testing.T) {
 				"repo": "https://github.com/example/repo",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 4 {
 					t.Errorf("expected 4 steps, got %d", len(steps))
 				}
@@ -457,7 +464,8 @@ func TestCloneAndBuildGo(t *testing.T) {
 				"output":  "/app",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[2].Content, "/app") {
 					t.Errorf("expected custom output /app, got: %s", steps[2].Content)
 				}
@@ -473,7 +481,8 @@ func TestCloneAndBuildGo(t *testing.T) {
 				"tag":  "v1.2.3",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "--branch v1.2.3") {
 					t.Errorf("expected --branch v1.2.3, got: %s", steps[0].Content)
 				}
@@ -485,7 +494,8 @@ func TestCloneAndBuildGo(t *testing.T) {
 				"repo": "https://github.com/csmith/dotege",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, `{{github_tag "csmith/dotege"}}`) {
 					t.Errorf("expected github_tag function, got: %s", steps[0].Content)
 				}
@@ -497,7 +507,8 @@ func TestCloneAndBuildGo(t *testing.T) {
 				"repo": "https://gitlab.com/example/repo",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if strings.Contains(steps[0].Content, "github_tag") {
 					t.Errorf("expected no github_tag for non-GitHub repo, got: %s", steps[0].Content)
 				}
@@ -532,7 +543,7 @@ func TestBuildGoStatic(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "minimal parameters",
@@ -540,7 +551,8 @@ func TestBuildGoStatic(t *testing.T) {
 				"repo": "https://github.com/example/repo",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 4 {
 					t.Errorf("expected 4 steps, got %d", len(steps))
 				}
@@ -556,7 +568,8 @@ func TestBuildGoStatic(t *testing.T) {
 				"ignore": "modernc.org/mathutil",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[3].Content, "--ignore modernc.org/mathutil") {
 					t.Errorf("expected ignore parameter, got: %s", steps[3].Content)
 				}
@@ -569,7 +582,8 @@ func TestBuildGoStatic(t *testing.T) {
 				"workdir": "/custom",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "/custom") {
 					t.Errorf("expected custom workdir, got: %s", steps[0].Content)
 				}
@@ -601,7 +615,7 @@ func TestCloneAndBuildRust(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "minimal parameters",
@@ -609,7 +623,8 @@ func TestCloneAndBuildRust(t *testing.T) {
 				"repo": "https://github.com/example/rustapp",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 3 {
 					t.Errorf("expected 3 steps, got %d", len(steps))
 				}
@@ -634,7 +649,8 @@ func TestCloneAndBuildRust(t *testing.T) {
 				"features": "sqlite,enable_mimalloc",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[1].Content, "--features sqlite,enable_mimalloc") {
 					t.Errorf("expected features in build command, got: %s", steps[1].Content)
 				}
@@ -650,7 +666,8 @@ func TestCloneAndBuildRust(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 5 {
 					t.Errorf("expected 5 steps (clone + 2 patches + build + copy), got %d", len(steps))
 				}
@@ -672,7 +689,8 @@ func TestCloneAndBuildRust(t *testing.T) {
 				"patches": "single.diff",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 4 {
 					t.Errorf("expected 4 steps (clone + patch + build + copy), got %d", len(steps))
 				}
@@ -689,7 +707,8 @@ func TestCloneAndBuildRust(t *testing.T) {
 				"output":  "/app/binary",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "/build") {
 					t.Errorf("expected custom workdir /build, got: %s", steps[0].Content)
 				}
@@ -705,7 +724,8 @@ func TestCloneAndBuildRust(t *testing.T) {
 				"tag":  "v2.0.0",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "--branch v2.0.0") {
 					t.Errorf("expected --branch v2.0.0, got: %s", steps[0].Content)
 				}
@@ -717,7 +737,8 @@ func TestCloneAndBuildRust(t *testing.T) {
 				"repo": "https://github.com/dani-garcia/vaultwarden",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, `{{github_tag "dani-garcia/vaultwarden"}}`) {
 					t.Errorf("expected github_tag function, got: %s", steps[0].Content)
 				}
@@ -749,7 +770,7 @@ func TestCloneAndBuildMake(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "minimal parameters with default strip",
@@ -757,7 +778,8 @@ func TestCloneAndBuildMake(t *testing.T) {
 				"repo": "https://github.com/example/makerepo",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 2 {
 					t.Errorf("expected 2 steps (clone + strip), got %d", len(steps))
 				}
@@ -779,7 +801,8 @@ func TestCloneAndBuildMake(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 3 {
 					t.Errorf("expected 3 steps (clone + make + strip), got %d", len(steps))
 				}
@@ -798,7 +821,8 @@ func TestCloneAndBuildMake(t *testing.T) {
 				"make-steps": "make",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 3 {
 					t.Errorf("expected 3 steps (clone + make + strip), got %d", len(steps))
 				}
@@ -814,7 +838,8 @@ func TestCloneAndBuildMake(t *testing.T) {
 				"strip": false,
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step (clone only), got %d", len(steps))
 				}
@@ -830,7 +855,8 @@ func TestCloneAndBuildMake(t *testing.T) {
 				"strip": true,
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				hasStripStep := false
 				for _, step := range steps {
 					if strings.Contains(step.Content, "strip") {
@@ -850,7 +876,8 @@ func TestCloneAndBuildMake(t *testing.T) {
 				"workdir": "/build",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "/build") {
 					t.Errorf("expected custom workdir /build, got: %s", steps[0].Content)
 				}
@@ -863,7 +890,8 @@ func TestCloneAndBuildMake(t *testing.T) {
 				"tag":  "v1.0.0",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "--branch v1.0.0") {
 					t.Errorf("expected --branch v1.0.0, got: %s", steps[0].Content)
 				}
@@ -895,7 +923,7 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "minimal parameters with defaults",
@@ -903,7 +931,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"repo": "https://github.com/example/autoconfrepo",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 3 {
 					t.Errorf("expected 3 steps (clone + configure + strip), got %d", len(steps))
 				}
@@ -929,7 +958,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 3 {
 					t.Errorf("expected 3 steps, got %d", len(steps))
 				}
@@ -946,7 +976,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"configure-options": "--prefix=/usr",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[1].Content, "./configure --prefix=/usr") {
 					t.Errorf("expected configure with option, got: %s", steps[1].Content)
 				}
@@ -962,7 +993,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 4 {
 					t.Errorf("expected 4 steps (clone + configure + make + strip), got %d", len(steps))
 				}
@@ -982,7 +1014,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"make-steps": "make install",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 4 {
 					t.Errorf("expected 4 steps, got %d", len(steps))
 				}
@@ -998,7 +1031,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"strip": false,
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 2 {
 					t.Errorf("expected 2 steps (clone + configure), got %d", len(steps))
 				}
@@ -1016,7 +1050,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"strip": true,
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				hasStripStep := false
 				for _, step := range steps {
 					if strings.Contains(step.Content, "strip") {
@@ -1036,7 +1071,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"workdir": "/build/custom",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "/build/custom") {
 					t.Errorf("expected custom workdir, got: %s", steps[0].Content)
 				}
@@ -1052,7 +1088,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"tag":  "v2.5.1",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "--branch v2.5.1") {
 					t.Errorf("expected --branch v2.5.1, got: %s", steps[0].Content)
 				}
@@ -1075,7 +1112,8 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 				"strip": true,
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 4 {
 					t.Errorf("expected 4 steps, got %d", len(steps))
 				}
@@ -1119,7 +1157,7 @@ func TestClone(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "basic clone without tag or commit",
@@ -1127,7 +1165,8 @@ func TestClone(t *testing.T) {
 				"repo": "https://github.com/example/repo",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1146,7 +1185,8 @@ func TestClone(t *testing.T) {
 				"tag":  "v1.0.0",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "--branch v1.0.0") {
 					t.Errorf("expected --branch v1.0.0, got: %s", steps[0].Content)
 				}
@@ -1159,7 +1199,8 @@ func TestClone(t *testing.T) {
 				"commit": "abc123def456",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "git checkout abc123def456") {
 					t.Errorf("expected git checkout with commit, got: %s", steps[0].Content)
 				}
@@ -1172,7 +1213,8 @@ func TestClone(t *testing.T) {
 				"workdir": "/custom/path",
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if !strings.Contains(steps[0].Content, "/custom/path") {
 					t.Errorf("expected custom workdir, got: %s", steps[0].Content)
 				}
@@ -1213,7 +1255,7 @@ func TestSetupUsersGroups(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "users and groups with rootfs",
@@ -1241,7 +1283,8 @@ func TestSetupUsersGroups(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1272,7 +1315,8 @@ func TestSetupUsersGroups(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				content := steps[0].Content
 				if !strings.Contains(content, `echo "testuser:x:1000:1000:testuser:/nonexistent:/sbin/nologin" >> /etc/passwd`) {
 					t.Errorf("expected user with defaults, got: %s", content)
@@ -1296,7 +1340,8 @@ func TestSetupUsersGroups(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				content := steps[0].Content
 				if !strings.Contains(content, "mkdir -p /rootfs/home/appuser") {
 					t.Errorf("expected home directory creation, got: %s", content)
@@ -1391,7 +1436,7 @@ func TestCreateDirectories(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "single directory without permissions",
@@ -1401,7 +1446,8 @@ func TestCreateDirectories(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1424,7 +1470,8 @@ func TestCreateDirectories(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1448,7 +1495,8 @@ func TestCreateDirectories(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1475,7 +1523,8 @@ func TestCreateDirectories(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1508,7 +1557,8 @@ func TestCreateDirectories(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1766,7 +1816,7 @@ func TestCopyFiles(t *testing.T) {
 		name    string
 		params  map[string]any
 		wantErr bool
-		check   func(*testing.T, []Step)
+		check   func(*testing.T, PipelineResult)
 	}{
 		{
 			name: "single file without options",
@@ -1779,7 +1829,8 @@ func TestCopyFiles(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1806,7 +1857,8 @@ func TestCopyFiles(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1827,7 +1879,8 @@ func TestCopyFiles(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1849,7 +1902,8 @@ func TestCopyFiles(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 1 {
 					t.Errorf("expected 1 step, got %d", len(steps))
 				}
@@ -1885,7 +1939,8 @@ func TestCopyFiles(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			check: func(t *testing.T, steps []Step) {
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
 				if len(steps) != 3 {
 					t.Errorf("expected 3 steps, got %d", len(steps))
 				}

@@ -636,9 +636,16 @@ func TestGeneratePipelineStep(t *testing.T) {
 					"gid":      1000,
 				},
 			},
-			expected: `# Create application user
+			expected: `RUN apk add --no-cache --virtual .create-user-deps \
+    {{- range $key, $value := alpine_packages "busybox"}}
+    {{$key}}={{$value}} \
+    {{- end}}
+    ;
+
+# Create application user
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser
+RUN apk del --no-network .create-user-deps
 `,
 			wantErr: false,
 		},

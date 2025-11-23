@@ -318,20 +318,69 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 		return "", err
 	}
 
-	steps, err := pipeline(step.With)
+	result, err := pipeline(step.With)
 	if err != nil {
 		return "", fmt.Errorf("executing pipeline %q: %w", step.Uses, err)
 	}
 
-	var b strings.Builder
-	for _, pipelineStep := range steps {
+	// Merge any user-specified build-deps with pipeline-declared build-deps
+	allBuildDeps := mergeDeps(result.BuildDeps, step.BuildDeps)
+
+	// Generate the step content
+	var stepsContent strings.Builder
+	for _, pipelineStep := range result.Steps {
 		if pipelineStep.Name != "" {
-			b.WriteString(fmt.Sprintf("# %s\n", pipelineStep.Name))
+			stepsContent.WriteString(fmt.Sprintf("# %s\n", pipelineStep.Name))
 		}
-		b.WriteString(pipelineStep.Content)
+		stepsContent.WriteString(pipelineStep.Content)
 	}
 
-	return b.String(), nil
+	// If there are build-deps, wrap the content
+	if len(allBuildDeps) > 0 {
+		return g.wrapWithBuildDeps(stepsContent.String(), allBuildDeps, step.Uses), nil
+	}
+
+	return stepsContent.String(), nil
+}
+
+// mergeDeps combines two slices of dependencies, removing duplicates
+func mergeDeps(a, b []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	for _, dep := range a {
+		if !seen[dep] {
+			seen[dep] = true
+			result = append(result, dep)
+		}
+	}
+	for _, dep := range b {
+		if !seen[dep] {
+			seen[dep] = true
+			result = append(result, dep)
+		}
+	}
+
+	return result
+}
+
+// wrapWithBuildDeps wraps dockerfile content with build dependency installation and cleanup
+func (g *Generator) wrapWithBuildDeps(content string, buildDeps []string, pipelineName string) string {
+	var b strings.Builder
+
+	virtualName := fmt.Sprintf(".%s-deps", pipelineName)
+	pkgList := util.BuildPackageList(buildDeps)
+	b.WriteString(fmt.Sprintf("RUN apk add --no-cache --virtual %s \\\n", virtualName))
+	b.WriteString(fmt.Sprintf("    {{- range $key, $value := alpine_packages %s}}\n", pkgList))
+	b.WriteString("    {{$key}}={{$value}} \\\n")
+	b.WriteString("    {{- end}}\n")
+	b.WriteString("    ;\n\n")
+
+	b.WriteString(content)
+
+	b.WriteString(fmt.Sprintf("RUN apk del --no-network %s\n", virtualName))
+
+	return b.String()
 }
 
 func (g *Generator) formatRunCommand(run string) string {

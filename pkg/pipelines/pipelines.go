@@ -12,7 +12,14 @@ type Step struct {
 	Content string
 }
 
-type Pipeline func(params map[string]any) ([]Step, error)
+// PipelineResult contains the generated steps and their dependencies
+type PipelineResult struct {
+	Steps     []Step
+	BuildDeps []string // Temporary packages needed during build, removed after
+	Packages  []string // Packages that need to persist in the image
+}
+
+type Pipeline func(params map[string]any) (PipelineResult, error)
 
 var Registry = map[string]Pipeline{
 	"create-user":              CreateUser,
@@ -30,98 +37,104 @@ var Registry = map[string]Pipeline{
 	"copy-files":               CopyFiles,
 }
 
-func CreateUser(params map[string]any) ([]Step, error) {
+func CreateUser(params map[string]any) (PipelineResult, error) {
 	username, err := util.ValidateStringParam(params, "username")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	uidInt, err := util.ValidateIntParam(params, "uid")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	gidInt, err := util.ValidateIntParam(params, "gid")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
-	return []Step{{
-		Name: "Create application user",
-		Content: fmt.Sprintf("RUN addgroup -g %d %s && \\\n    adduser -D -u %d -G %s %s\n",
-			gidInt, username, uidInt, username, username),
-	}}, nil
+	return PipelineResult{
+		Steps: []Step{{
+			Name: "Create application user",
+			Content: fmt.Sprintf("RUN addgroup -g %d %s && \\\n    adduser -D -u %d -G %s %s\n",
+				gidInt, username, uidInt, username, username),
+		}},
+		BuildDeps: []string{"busybox"},
+	}, nil
 }
 
-func SetOwnership(params map[string]any) ([]Step, error) {
+func SetOwnership(params map[string]any) (PipelineResult, error) {
 	user, err := util.ValidateStringParam(params, "user")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	group, err := util.ValidateStringParam(params, "group")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	path, err := util.ValidateStringParam(params, "path")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
-	return []Step{{
-		Name:    "Change file ownership",
-		Content: fmt.Sprintf("RUN chown -R %s:%s %s\n", user, group, path),
-	}}, nil
+	return PipelineResult{
+		Steps: []Step{{
+			Name:    "Change file ownership",
+			Content: fmt.Sprintf("RUN chown -R %s:%s %s\n", user, group, path),
+		}},
+		BuildDeps: []string{"busybox"},
+	}, nil
 }
 
-func DownloadVerifyExtract(params map[string]any) ([]Step, error) {
+func DownloadVerifyExtract(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("download-verify-extract", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	url, err := util.ValidateStringParam(params, "url")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	destination, err := util.ValidateStringParam(params, "destination")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	checksum, err := util.ValidateOptionalStringParamStrict(params, "checksum", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 	checksumURL, err := util.ValidateOptionalStringParamStrict(params, "checksum-url", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 	checksumPattern, err := util.ValidateOptionalStringParamStrict(params, "checksum-pattern", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	hasChecksum := checksum != ""
 	hasChecksumURL := checksumURL != ""
 
 	if err := util.ValidateMutuallyExclusiveRequired(hasChecksum, hasChecksumURL, "checksum", "checksum-url"); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	extractDir, err := util.ValidateOptionalStringParamStrict(params, "extract-dir", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 	stripComponents, err := util.ValidateOptionalIntParam(params, "strip-components", 0)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	if extractDir != "" {
 		if err := validateArchiveFormat(destination); err != nil {
-			return nil, err
+			return PipelineResult{}, err
 		}
 	}
 
@@ -156,26 +169,36 @@ func DownloadVerifyExtract(params map[string]any) ([]Step, error) {
 
 	combinedCmd := strings.Join(cmdParts, " && \\\n    ")
 
-	steps := []Step{
-		{
-			Name:    "Download, verify and extract",
-			Content: fmt.Sprintf("RUN %s\n", combinedCmd),
-		},
+	// Determine build deps based on what's needed
+	buildDeps := []string{"busybox", "curl"}
+	if extractDir != "" && strings.HasSuffix(destination, ".zip") {
+		buildDeps = append(buildDeps, "unzip")
 	}
 
-	return steps, nil
+	return PipelineResult{
+		Steps: []Step{
+			{
+				Name:    "Download, verify and extract",
+				Content: fmt.Sprintf("RUN %s\n", combinedCmd),
+			},
+		},
+		BuildDeps: buildDeps,
+	}, nil
 }
 
-func MakeExecutable(params map[string]any) ([]Step, error) {
+func MakeExecutable(params map[string]any) (PipelineResult, error) {
 	path, err := util.ValidateStringParam(params, "path")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
-	return []Step{{
-		Name:    "Set executable permission",
-		Content: fmt.Sprintf("RUN chmod +x %s\n", path),
-	}}, nil
+	return PipelineResult{
+		Steps: []Step{{
+			Name:    "Set executable permission",
+			Content: fmt.Sprintf("RUN chmod +x %s\n", path),
+		}},
+		BuildDeps: []string{"busybox"},
+	}, nil
 }
 
 func buildExtractCommand(destination, extractDir string, stripComponents int) string {
@@ -293,35 +316,38 @@ func generateCloneStep(repo, tag, commit, workdir string) Step {
 	}
 }
 
-func Clone(params map[string]any) ([]Step, error) {
+func Clone(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("clone", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	repo, err := util.ValidateStringParam(params, "repo")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	workdir, err := util.ValidateOptionalStringParamStrict(params, "workdir", "/src")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 	commit, err := util.ValidateOptionalStringParamStrict(params, "commit", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	if tag != "" && commit != "" {
-		return nil, fmt.Errorf("cannot specify both tag and commit")
+		return PipelineResult{}, fmt.Errorf("cannot specify both tag and commit")
 	}
 
-	return []Step{generateCloneStep(repo, tag, commit, workdir)}, nil
+	return PipelineResult{
+		Steps:     []Step{generateCloneStep(repo, tag, commit, workdir)},
+		BuildDeps: []string{"git"},
+	}, nil
 }
 
 func generateGoBuildStep(pkg, output, extraLdflags, extraTags string, cgo bool) Step {
@@ -357,144 +383,155 @@ func generateLicenseStep(pkg, output, ignore string) Step {
 	}
 }
 
-func CloneAndBuildGo(params map[string]any) ([]Step, error) {
+func CloneAndBuildGo(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("clone-and-build-go", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	repo, err := util.ValidateStringParam(params, "repo")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	pkg, err := util.ValidateOptionalStringParamStrict(params, "package", ".")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	output, err := util.ValidateOptionalStringParamStrict(params, "output", "/main")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	ignore, err := util.ValidateOptionalStringParamStrict(params, "ignore", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
-	return []Step{
-		generateCloneStep(repo, tag, "", workdir),
-		generateGoModDownloadStep(workdir),
-		generateGoBuildStep(pkg, output, "", goTags, cgo),
-		generateLicenseStep(pkg, output, ignore),
+	return PipelineResult{
+		Steps: []Step{
+			generateCloneStep(repo, tag, "", workdir),
+			generateGoModDownloadStep(workdir),
+			generateGoBuildStep(pkg, output, "", goTags, cgo),
+			generateLicenseStep(pkg, output, ignore),
+		},
+		BuildDeps: []string{"git", "go"},
 	}, nil
 }
 
-func BuildGo(params map[string]any) ([]Step, error) {
+func BuildGo(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("build-go-static", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	repo, err := util.ValidateStringParam(params, "repo")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	pkg, err := util.ValidateOptionalStringParamStrict(params, "package", ".")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	output, err := util.ValidateOptionalStringParamStrict(params, "output", "/main")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	ignore, err := util.ValidateOptionalStringParamStrict(params, "ignore", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
-	return []Step{
-		generateCloneStep(repo, tag, "", workdir),
-		generateGoModDownloadStep(workdir),
-		generateGoBuildStep(pkg, output, "", goTags, cgo),
-		generateLicenseStep(pkg, output, ignore),
+	return PipelineResult{
+		Steps: []Step{
+			generateCloneStep(repo, tag, "", workdir),
+			generateGoModDownloadStep(workdir),
+			generateGoBuildStep(pkg, output, "", goTags, cgo),
+			generateLicenseStep(pkg, output, ignore),
+		},
+		BuildDeps: []string{"git", "go"},
 	}, nil
 }
 
-func CloneAndBuildRust(params map[string]any) ([]Step, error) {
+func CloneAndBuildRust(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("clone-and-build-rust", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	repo, err := util.ValidateStringParam(params, "repo")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	features, err := util.ValidateOptionalStringParamStrict(params, "features", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 	output, err := util.ValidateOptionalStringParamStrict(params, "output", "/main")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	patches := util.ExtractStringSlice(params, "patches")
 
 	steps := []Step{
 		generateCloneStep(repo, tag, "", workdir),
+	}
+
+	buildDeps := []string{"busybox", "git", "cargo", "rust"}
+	if len(patches) > 0 {
+		buildDeps = append(buildDeps, "patch")
 	}
 
 	for _, patch := range patches {
@@ -521,34 +558,37 @@ func CloneAndBuildRust(params map[string]any) ([]Step, error) {
 		Content: fmt.Sprintf("RUN find %s/target/x86_64-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} %s \\;\n", workdir, output),
 	})
 
-	return steps, nil
+	return PipelineResult{
+		Steps:     steps,
+		BuildDeps: buildDeps,
+	}, nil
 }
 
-func CloneAndBuildMake(params map[string]any) ([]Step, error) {
+func CloneAndBuildMake(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("clone-and-build-make", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	repo, err := util.ValidateStringParam(params, "repo")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	makeSteps := util.ExtractStringSlice(params, "make-steps")
 
 	strip, err := util.ValidateOptionalBoolParam(params, "strip", true)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	steps := []Step{
@@ -559,31 +599,36 @@ func CloneAndBuildMake(params map[string]any) ([]Step, error) {
 		steps = append(steps, generateMakeStep(workdir, makeSteps))
 	}
 
+	buildDeps := []string{"busybox", "git", "make"}
 	if strip {
 		steps = append(steps, generateStripStep(workdir))
+		buildDeps = append(buildDeps, "binutils")
 	}
 
-	return steps, nil
+	return PipelineResult{
+		Steps:     steps,
+		BuildDeps: buildDeps,
+	}, nil
 }
 
-func CloneAndBuildAutoconf(params map[string]any) ([]Step, error) {
+func CloneAndBuildAutoconf(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("clone-and-build-autoconf", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	repo, err := util.ValidateStringParam(params, "repo")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	configureOptions := util.ExtractStringSlice(params, "configure-options")
@@ -591,7 +636,7 @@ func CloneAndBuildAutoconf(params map[string]any) ([]Step, error) {
 
 	strip, err := util.ValidateOptionalBoolParam(params, "strip", true)
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	steps := []Step{
@@ -614,21 +659,26 @@ func CloneAndBuildAutoconf(params map[string]any) ([]Step, error) {
 		})
 	}
 
+	buildDeps := []string{"busybox", "git", "autoconf", "automake", "make"}
 	if strip {
 		steps = append(steps, generateStripStep(workdir))
+		buildDeps = append(buildDeps, "binutils")
 	}
 
-	return steps, nil
+	return PipelineResult{
+		Steps:     steps,
+		BuildDeps: buildDeps,
+	}, nil
 }
 
-func SetupUsersGroups(params map[string]any) ([]Step, error) {
+func SetupUsersGroups(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("setup-users-groups", params); err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	rootfs, err := util.ValidateOptionalStringParamStrict(params, "rootfs", "")
 	if err != nil {
-		return nil, err
+		return PipelineResult{}, err
 	}
 
 	var groups []groupDef
@@ -636,7 +686,7 @@ func SetupUsersGroups(params map[string]any) ([]Step, error) {
 		var err error
 		groups, err = parseGroups(g)
 		if err != nil {
-			return nil, fmt.Errorf("parsing groups: %w", err)
+			return PipelineResult{}, fmt.Errorf("parsing groups: %w", err)
 		}
 	}
 
@@ -645,12 +695,12 @@ func SetupUsersGroups(params map[string]any) ([]Step, error) {
 		var err error
 		users, err = parseUsers(u)
 		if err != nil {
-			return nil, fmt.Errorf("parsing users: %w", err)
+			return PipelineResult{}, fmt.Errorf("parsing users: %w", err)
 		}
 	}
 
 	if len(groups) == 0 && len(users) == 0 {
-		return nil, fmt.Errorf("no users or groups specified")
+		return PipelineResult{}, fmt.Errorf("no users or groups specified")
 	}
 
 	var commands []string
@@ -689,10 +739,13 @@ func SetupUsersGroups(params map[string]any) ([]Step, error) {
 
 	cmdStr := strings.Join(commands, "; \\\n    ")
 
-	return []Step{{
-		Name:    "Set up users and groups",
-		Content: fmt.Sprintf("RUN %s\n", cmdStr),
-	}}, nil
+	return PipelineResult{
+		Steps: []Step{{
+			Name:    "Set up users and groups",
+			Content: fmt.Sprintf("RUN %s\n", cmdStr),
+		}},
+		BuildDeps: []string{"busybox"},
+	}, nil
 }
 
 type groupDef struct {
@@ -754,19 +807,19 @@ func parseUsers(data any) ([]userDef, error) {
 	})
 }
 
-func CreateDirectories(params map[string]any) ([]Step, error) {
+func CreateDirectories(params map[string]any) (PipelineResult, error) {
 	dirsParam, ok := params["directories"]
 	if !ok {
-		return nil, fmt.Errorf("directories parameter is required")
+		return PipelineResult{}, fmt.Errorf("directories parameter is required")
 	}
 
 	dirs, err := parseDirectories(dirsParam)
 	if err != nil {
-		return nil, fmt.Errorf("parsing directories: %w", err)
+		return PipelineResult{}, fmt.Errorf("parsing directories: %w", err)
 	}
 
 	if len(dirs) == 0 {
-		return nil, fmt.Errorf("at least one directory must be specified")
+		return PipelineResult{}, fmt.Errorf("at least one directory must be specified")
 	}
 
 	var commands []string
@@ -786,10 +839,13 @@ func CreateDirectories(params map[string]any) ([]Step, error) {
 
 	cmdStr := strings.Join(commands, "; \\\n    ")
 
-	return []Step{{
-		Name:    "Create directories",
-		Content: fmt.Sprintf("RUN %s\n", cmdStr),
-	}}, nil
+	return PipelineResult{
+		Steps: []Step{{
+			Name:    "Create directories",
+			Content: fmt.Sprintf("RUN %s\n", cmdStr),
+		}},
+		BuildDeps: []string{"busybox"},
+	}, nil
 }
 
 type directoryDef struct {
@@ -811,19 +867,19 @@ func parseDirectories(data any) ([]directoryDef, error) {
 	})
 }
 
-func CopyFiles(params map[string]any) ([]Step, error) {
+func CopyFiles(params map[string]any) (PipelineResult, error) {
 	filesParam, ok := params["files"]
 	if !ok {
-		return nil, fmt.Errorf("files parameter is required")
+		return PipelineResult{}, fmt.Errorf("files parameter is required")
 	}
 
 	files, err := parseFiles(filesParam)
 	if err != nil {
-		return nil, fmt.Errorf("parsing files: %w", err)
+		return PipelineResult{}, fmt.Errorf("parsing files: %w", err)
 	}
 
 	if len(files) == 0 {
-		return nil, fmt.Errorf("at least one file must be specified")
+		return PipelineResult{}, fmt.Errorf("at least one file must be specified")
 	}
 
 	var steps []Step
@@ -846,7 +902,9 @@ func CopyFiles(params map[string]any) ([]Step, error) {
 		})
 	}
 
-	return steps, nil
+	return PipelineResult{
+		Steps: steps,
+	}, nil
 }
 
 type fileDef struct {
