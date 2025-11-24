@@ -8,9 +8,11 @@ type BuildConfig struct {
 }
 
 type Stage struct {
-	Name        string         `yaml:"name"`
-	Environment Environment    `yaml:"environment"`
-	Pipeline    []PipelineStep `yaml:"pipeline"`
+	Name        string         `yaml:"name,omitempty"`
+	Template    string         `yaml:"template,omitempty"`
+	With        map[string]any `yaml:"with,omitempty"`
+	Environment Environment    `yaml:"environment,omitempty"`
+	Pipeline    []PipelineStep `yaml:"pipeline,omitempty"`
 }
 
 type Package struct {

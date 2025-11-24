@@ -473,6 +473,181 @@ stages:
 	})
 }
 
+func TestExpandTemplates(t *testing.T) {
+	tests := []struct {
+		name        string
+		yaml        string
+		expectError bool
+		errorMsg    string
+		checkStage  func(*testing.T, Stage)
+	}{
+		{
+			name: "go-builder template with required params",
+			yaml: `package:
+  name: test
+stages:
+  - template: go-builder
+    with:
+      repo: https://github.com/owner/repo
+      output: /app/binary`,
+			expectError: false,
+			checkStage: func(t *testing.T, stage Stage) {
+				if stage.Name != "go-builder-0" {
+					t.Errorf("expected generated name 'go-builder-0', got %q", stage.Name)
+				}
+				if stage.Environment.BaseImage != "golang" {
+					t.Errorf("expected base image golang, got %q", stage.Environment.BaseImage)
+				}
+				if len(stage.Pipeline) != 1 {
+					t.Errorf("expected 1 pipeline step, got %d", len(stage.Pipeline))
+				}
+			},
+		},
+		{
+			name: "template with custom name",
+			yaml: `package:
+  name: test
+stages:
+  - name: builder
+    template: go-builder
+    with:
+      repo: https://github.com/owner/repo
+      output: /app/binary`,
+			expectError: false,
+			checkStage: func(t *testing.T, stage Stage) {
+				if stage.Name != "builder" {
+					t.Errorf("expected name 'builder', got %q", stage.Name)
+				}
+			},
+		},
+		{
+			name: "base template with optional params",
+			yaml: `package:
+  name: test
+stages:
+  - template: base
+    with:
+      packages: ["ca-certificates"]
+      user: appuser
+      workdir: /app`,
+			expectError: false,
+			checkStage: func(t *testing.T, stage Stage) {
+				if stage.Environment.BaseImage != "alpine" {
+					t.Errorf("expected base image alpine, got %q", stage.Environment.BaseImage)
+				}
+				if len(stage.Environment.Packages) != 1 {
+					t.Errorf("expected 1 package, got %d", len(stage.Environment.Packages))
+				}
+				if stage.Environment.User != "appuser" {
+					t.Errorf("expected user appuser, got %q", stage.Environment.User)
+				}
+			},
+		},
+		{
+			name: "baseroot template",
+			yaml: `package:
+  name: test
+stages:
+  - template: baseroot
+    with:
+      user: myuser
+      uid: 1500`,
+			expectError: false,
+			checkStage: func(t *testing.T, stage Stage) {
+				if stage.Environment.BaseImage != "alpine" {
+					t.Errorf("expected base image alpine, got %q", stage.Environment.BaseImage)
+				}
+				if stage.Environment.User != "myuser" {
+					t.Errorf("expected user myuser, got %q", stage.Environment.User)
+				}
+				if len(stage.Pipeline) != 1 {
+					t.Errorf("expected 1 pipeline step, got %d", len(stage.Pipeline))
+				}
+			},
+		},
+		{
+			name: "template with missing required param",
+			yaml: `package:
+  name: test
+stages:
+  - template: go-builder
+    with:
+      repo: https://github.com/owner/repo`,
+			expectError: true,
+			errorMsg:    "required parameter \"output\" is missing",
+		},
+		{
+			name: "unknown template",
+			yaml: `package:
+  name: test
+stages:
+  - template: nonexistent
+    with:
+      foo: bar`,
+			expectError: true,
+			errorMsg:    "unknown template",
+		},
+		{
+			name: "template with conflicting environment field",
+			yaml: `package:
+  name: test
+stages:
+  - template: base
+    environment:
+      base-image: alpine
+    with:
+      user: appuser`,
+			expectError: true,
+			errorMsg:    "cannot specify both 'template' and 'environment'",
+		},
+		{
+			name: "template with conflicting pipeline field",
+			yaml: `package:
+  name: test
+stages:
+  - template: base
+    pipeline:
+      - run: echo test
+    with:
+      user: appuser`,
+			expectError: true,
+			errorMsg:    "cannot specify both 'template' and 'pipeline'",
+		},
+		{
+			name: "mixed template and regular stages",
+			yaml: `package:
+  name: test
+stages:
+  - template: go-builder
+    with:
+      repo: https://github.com/owner/repo
+      output: /app/binary
+  - name: runtime
+    environment:
+      base-image: alpine
+    pipeline:
+      - run: echo deploy`,
+			expectError: false,
+			checkStage: func(t *testing.T, stage Stage) {
+				// Check first stage (template)
+				if stage.Name != "go-builder-0" {
+					t.Errorf("expected first stage name 'go-builder-0', got %q", stage.Name)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, err := Parse([]byte(tt.yaml))
+			checkError(t, err, tt.expectError, tt.errorMsg)
+			if !tt.expectError && tt.checkStage != nil && config != nil && len(config.Stages) > 0 {
+				tt.checkStage(t, config.Stages[0])
+			}
+		})
+	}
+}
+
 func TestEnvironmentIsEmpty(t *testing.T) {
 	tests := []struct {
 		name     string
