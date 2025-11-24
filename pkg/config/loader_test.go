@@ -363,6 +363,68 @@ stages:
 			expectError: true,
 			errorMsg:    "package.name is required",
 		},
+		{
+			name: "unexpected top-level field",
+			yaml: `package:
+  name: test
+stages:
+  - name: build
+    environment:
+      base-image: alpine
+unexpected-field: value`,
+			expectError: true,
+			errorMsg:    "field unexpected-field not found",
+		},
+		{
+			name: "unexpected field in package section",
+			yaml: `package:
+  name: test
+  unknown-field: value
+stages:
+  - name: build
+    environment:
+      base-image: alpine`,
+			expectError: true,
+			errorMsg:    "field unknown-field not found",
+		},
+		{
+			name: "unexpected field in stage",
+			yaml: `package:
+  name: test
+stages:
+  - name: build
+    invalid-key: something
+    environment:
+      base-image: alpine`,
+			expectError: true,
+			errorMsg:    "field invalid-key not found",
+		},
+		{
+			name: "unexpected field in environment",
+			yaml: `package:
+  name: test
+stages:
+  - name: build
+    environment:
+      base-image: alpine
+      unknown-env-field: test`,
+			expectError: true,
+			errorMsg:    "field unknown-env-field not found",
+		},
+		{
+			name: "unexpected field in pipeline step",
+			yaml: `package:
+  name: test
+stages:
+  - name: build
+    environment:
+      base-image: alpine
+    pipeline:
+      - run: echo test
+        invalid-step-field: value`,
+			expectError: true,
+			errorMsg:    "field invalid-step-field not found",
+		},
 	}
 
 	for _, tt := range tests {

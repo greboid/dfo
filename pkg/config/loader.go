@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -19,7 +20,11 @@ func Load(fs fs.ReadFileFS, path string) (*BuildConfig, error) {
 
 func Parse(data []byte) (*BuildConfig, error) {
 	var config BuildConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
+
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+
+	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("parsing YAML: %w", err)
 	}
 
