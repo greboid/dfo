@@ -224,17 +224,30 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		buildParams["patches"] = patches
 	}
 
+	// Parse volumes early so we can use them in build stage
+	volumes, err := ParseVolumes(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
+	}
+
+	buildPipeline := []PipelineStepResult{
+		{
+			Uses: "build-go-static",
+			With: buildParams,
+		},
+	}
+
+	// Create volumes in build stage
+	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
+		buildPipeline = append(buildPipeline, *volumeStep)
+	}
+
 	buildStage := StageResult{
 		Name: "build",
 		Environment: EnvironmentResult{
 			BaseImage: "golang",
 		},
-		Pipeline: []PipelineStepResult{
-			{
-				Uses: "build-go-static",
-				With: buildParams,
-			},
-		},
+		Pipeline: buildPipeline,
 	}
 
 	rootfsPipeline := []PipelineStepResult{
@@ -254,13 +267,15 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		},
 	}
 
-	// Add volumes if specified
-	volumes, err := ParseVolumes(params)
-	if err != nil {
-		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
-	}
-	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
-		rootfsPipeline = append(rootfsPipeline, *volumeStep)
+	// Copy volumes from build stage
+	for _, vol := range volumes {
+		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      vol.Path,
+				To:        "/rootfs" + vol.Path,
+			},
+		})
 	}
 
 	rootfsStage := StageResult{
