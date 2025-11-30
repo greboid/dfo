@@ -853,6 +853,9 @@ func CreateDirectories(params map[string]any) (PipelineResult, error) {
 		if dir.Permissions != "" {
 			commands = append(commands, fmt.Sprintf("chmod %s %s", dir.Permissions, dir.Path))
 		}
+		if dir.Owner != "" {
+			commands = append(commands, fmt.Sprintf("chown %s %s", dir.Owner, dir.Path))
+		}
 	}
 
 	cmdStr := strings.Join(commands, "; \\\n    ")
@@ -868,6 +871,7 @@ func CreateDirectories(params map[string]any) (PipelineResult, error) {
 
 type directoryDef struct {
 	Path        string
+	Owner       string
 	Permissions string
 }
 
@@ -880,6 +884,7 @@ func parseDirectories(data any) ([]directoryDef, error) {
 
 		return directoryDef{
 			Path:        path,
+			Owner:       util.ExtractOptionalString(m, "owner"),
 			Permissions: util.ExtractOptionalString(m, "permissions"),
 		}, nil
 	})

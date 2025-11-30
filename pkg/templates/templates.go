@@ -4,6 +4,12 @@ import (
 	"fmt"
 )
 
+// Volume defaults matching postgres-15 conventions
+const (
+	DefaultVolumeOwner       = "65532:65532"
+	DefaultVolumePermissions = "777"
+)
+
 type TemplateResult struct {
 	Stages []StageResult
 }
@@ -180,6 +186,15 @@ func baseroot(params map[string]any) (TemplateResult, error) {
 		stage.Environment.WorkDir = workdir
 	}
 
+	// Add volumes if specified
+	volumes, err := ParseVolumes(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
+	}
+	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
+		stage.Pipeline = append(stage.Pipeline, *volumeStep)
+	}
+
 	return TemplateResult{Stages: []StageResult{stage}}, nil
 }
 
@@ -219,27 +234,38 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		},
 	}
 
+	rootfsPipeline := []PipelineStepResult{
+		{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      "/main",
+				To:        "/rootfs/" + binary,
+			},
+		},
+		{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      "/notices",
+				To:        "/rootfs/notices",
+			},
+		},
+	}
+
+	// Add volumes if specified
+	volumes, err := ParseVolumes(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
+	}
+	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
+		rootfsPipeline = append(rootfsPipeline, *volumeStep)
+	}
+
 	rootfsStage := StageResult{
 		Name: "rootfs",
 		Environment: EnvironmentResult{
 			BaseImage: "base",
 		},
-		Pipeline: []PipelineStepResult{
-			{
-				Copy: &CopyStepResult{
-					FromStage: "build",
-					From:      "/main",
-					To:        "/rootfs/" + binary,
-				},
-			},
-			{
-				Copy: &CopyStepResult{
-					FromStage: "build",
-					From:      "/notices",
-					To:        "/rootfs/notices",
-				},
-			},
-		},
+		Pipeline: rootfsPipeline,
 	}
 
 	finalStage := StageResult{
@@ -280,4 +306,81 @@ func goApp(params map[string]any) (TemplateResult, error) {
 	return TemplateResult{
 		Stages: []StageResult{buildStage, rootfsStage, finalStage},
 	}, nil
+}
+
+// VolumeSpec represents a volume directory specification
+type VolumeSpec struct {
+	Path        string
+	Owner       string
+	Permissions string
+}
+
+// ParseVolumes extracts volume specifications from template params.
+// Each volume can specify path (required), owner (optional), and permissions (optional).
+// Defaults are applied from postgres-15 conventions: owner "65532:65532", permissions "777".
+func ParseVolumes(params map[string]any) ([]VolumeSpec, error) {
+	volumesParam, ok := params["volumes"]
+	if !ok {
+		return nil, nil
+	}
+
+	volumesList, ok := volumesParam.([]any)
+	if !ok {
+		return nil, fmt.Errorf("volumes must be a list")
+	}
+
+	volumes := make([]VolumeSpec, 0, len(volumesList))
+	for i, v := range volumesList {
+		volumeMap, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("volume at index %d must be a map", i)
+		}
+
+		path, ok := volumeMap["path"].(string)
+		if !ok || path == "" {
+			return nil, fmt.Errorf("volume at index %d must have a path", i)
+		}
+
+		owner := DefaultVolumeOwner
+		if o, ok := volumeMap["owner"].(string); ok && o != "" {
+			owner = o
+		}
+
+		permissions := DefaultVolumePermissions
+		if p, ok := volumeMap["permissions"].(string); ok && p != "" {
+			permissions = p
+		}
+
+		volumes = append(volumes, VolumeSpec{
+			Path:        path,
+			Owner:       owner,
+			Permissions: permissions,
+		})
+	}
+
+	return volumes, nil
+}
+
+// CreateVolumesStep generates a create-directories pipeline step from volume specs.
+// Returns nil if no volumes are specified.
+func CreateVolumesStep(volumes []VolumeSpec) *PipelineStepResult {
+	if len(volumes) == 0 {
+		return nil
+	}
+
+	directories := make([]map[string]any, len(volumes))
+	for i, vol := range volumes {
+		directories[i] = map[string]any{
+			"path":        vol.Path,
+			"owner":       vol.Owner,
+			"permissions": vol.Permissions,
+		}
+	}
+
+	return &PipelineStepResult{
+		Uses: "create-directories",
+		With: map[string]any{
+			"directories": directories,
+		},
+	}
 }
