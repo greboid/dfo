@@ -207,7 +207,7 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		workdir = wd
 	}
 
-	pkg := "./cmd/" + binary
+	pkg := "."
 	if p, ok := params["package"].(string); ok {
 		pkg = p
 	}
