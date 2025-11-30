@@ -507,14 +507,27 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
+	patches := util.ExtractStringSlice(params, "patches")
+
+	steps := []Step{
+		generateCloneStep(repo, tag, "", workdir),
+	}
+
+	buildDeps := []string{"git", "go"}
+	if len(patches) > 0 {
+		buildDeps = append(buildDeps, "patch")
+		steps = append(steps, generatePatchSteps(patches, workdir)...)
+	}
+
+	steps = append(steps,
+		generateGoModDownloadStep(workdir),
+		generateGoBuildStep(pkg, output, "", goTags, cgo),
+		generateLicenseStep(pkg, output, ignore),
+	)
+
 	return PipelineResult{
-		Steps: []Step{
-			generateCloneStep(repo, tag, "", workdir),
-			generateGoModDownloadStep(workdir),
-			generateGoBuildStep(pkg, output, "", goTags, cgo),
-			generateLicenseStep(pkg, output, ignore),
-		},
-		BuildDeps: []string{"git", "go"},
+		Steps:     steps,
+		BuildDeps: buildDeps,
 	}, nil
 }
 

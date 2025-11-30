@@ -3,23 +3,32 @@ package util
 import "fmt"
 
 func ParseArrayParam[T any](data any, itemName string, parseItem func(map[string]any, int) (T, error)) ([]T, error) {
-	items, ok := data.([]any)
-	if !ok {
-		return nil, fmt.Errorf("%s must be an array", itemName)
-	}
-
 	var result []T
-	for i, item := range items {
-		itemMap, ok := item.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("%s at index %d must be a map", itemName, i)
-		}
 
-		parsed, err := parseItem(itemMap, i)
-		if err != nil {
-			return nil, err
+	switch items := data.(type) {
+	case []any:
+		for i, item := range items {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("%s at index %d must be a map", itemName, i)
+			}
+
+			parsed, err := parseItem(itemMap, i)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, parsed)
 		}
-		result = append(result, parsed)
+	case []map[string]any:
+		for i, itemMap := range items {
+			parsed, err := parseItem(itemMap, i)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, parsed)
+		}
+	default:
+		return nil, fmt.Errorf("%s must be an array", itemName)
 	}
 
 	return result, nil

@@ -220,6 +220,9 @@ func goApp(params map[string]any) (TemplateResult, error) {
 	if ignore, ok := params["ignore"].(string); ok {
 		buildParams["ignore"] = ignore
 	}
+	if patches, ok := params["patches"]; ok {
+		buildParams["patches"] = patches
+	}
 
 	buildStage := StageResult{
 		Name: "build",
@@ -290,6 +293,15 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		for i, port := range expose {
 			if portStr, ok := port.(string); ok {
 				finalStage.Environment.Expose[i] = portStr
+			}
+		}
+	}
+
+	if entrypoint, ok := params["entrypoint"].([]any); ok {
+		finalStage.Environment.Entrypoint = make([]string, len(entrypoint))
+		for i, arg := range entrypoint {
+			if argStr, ok := arg.(string); ok {
+				finalStage.Environment.Entrypoint[i] = argStr
 			}
 		}
 	}

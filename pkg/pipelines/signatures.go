@@ -107,6 +107,7 @@ var Signatures = map[string]PipelineSignature{
 			"tag":     {Type: TypeString, Required: false, Description: "Tag or branch to checkout"},
 			"go-tags": {Type: TypeString, Required: false, Description: "Additional Go build tags (default: netgo,osusergo)"},
 			"cgo":     {Type: TypeBool, Required: false, Description: "Enable CGO (default: true)"},
+			"patches": {Type: TypeStringArray, Required: false, Description: "Patch files to apply"},
 		},
 	},
 	"clone-and-build-rust": {
@@ -276,6 +277,8 @@ func checkType(paramName string, value any, expectedType ParamType) error {
 					return fmt.Errorf("parameter %q[%d] must be an object, got %T", paramName, i, item)
 				}
 			}
+		case []map[string]any:
+			// Already the correct type, no validation needed
 		default:
 			return fmt.Errorf("parameter %q must be an array of objects, got %T", paramName, value)
 		}
