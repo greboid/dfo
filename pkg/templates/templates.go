@@ -51,9 +51,8 @@ type TemplateFunc func(params map[string]any) (TemplateResult, error)
 var Registry = map[string]TemplateFunc{
 	"go-builder":   goBuilder,
 	"rust-builder": rustBuilder,
-	"base":         base,
-	"baseroot":     baseroot,
 	"go-app":       goApp,
+	"rust-app":     rustApp,
 }
 
 func goBuilder(params map[string]any) (TemplateResult, error) {
@@ -75,17 +74,34 @@ func goBuilder(params map[string]any) (TemplateResult, error) {
 }
 
 func rustBuilder(params map[string]any) (TemplateResult, error) {
+	packages := []string{"git"}
+	if pkgs, ok := params["packages"].([]any); ok {
+		for _, pkg := range pkgs {
+			if pkgStr, ok := pkg.(string); ok {
+				packages = append(packages, pkgStr)
+			}
+		}
+	}
+
+	// Create a copy of params without the packages key for the pipeline
+	pipelineParams := make(map[string]any)
+	for k, v := range params {
+		if k != "packages" {
+			pipelineParams[k] = v
+		}
+	}
+
 	return TemplateResult{
 		Stages: []StageResult{
 			{
 				Environment: EnvironmentResult{
 					BaseImage: "rust",
-					Packages:  []string{"git"},
+					Packages:  packages,
 				},
 				Pipeline: []PipelineStepResult{
 					{
 						Uses: "clone-and-build-rust",
-						With: params,
+						With: pipelineParams,
 					},
 				},
 			},
@@ -263,6 +279,142 @@ func goApp(params map[string]any) (TemplateResult, error) {
 				FromStage: "build",
 				From:      "/notices",
 				To:        "/rootfs/notices",
+			},
+		},
+	}
+
+	// Copy volumes from build stage
+	for _, vol := range volumes {
+		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      vol.Path,
+				To:        "/rootfs" + vol.Path,
+			},
+		})
+	}
+
+	rootfsStage := StageResult{
+		Name: "rootfs",
+		Environment: EnvironmentResult{
+			BaseImage: "base",
+		},
+		Pipeline: rootfsPipeline,
+	}
+
+	finalStage := StageResult{
+		Name: "final",
+		Environment: EnvironmentResult{
+			BaseImage:  "base",
+			Entrypoint: []string{"/" + binary},
+		},
+		Pipeline: []PipelineStepResult{
+			{
+				Copy: &CopyStepResult{
+					FromStage: "rootfs",
+					From:      "/rootfs/",
+					To:        "/",
+				},
+			},
+		},
+	}
+
+	if expose, ok := params["expose"].([]any); ok {
+		finalStage.Environment.Expose = make([]string, len(expose))
+		for i, port := range expose {
+			if portStr, ok := port.(string); ok {
+				finalStage.Environment.Expose[i] = portStr
+			}
+		}
+	}
+
+	if entrypoint, ok := params["entrypoint"].([]any); ok {
+		finalStage.Environment.Entrypoint = make([]string, len(entrypoint))
+		for i, arg := range entrypoint {
+			if argStr, ok := arg.(string); ok {
+				finalStage.Environment.Entrypoint[i] = argStr
+			}
+		}
+	}
+
+	if cmd, ok := params["cmd"].([]any); ok {
+		finalStage.Environment.Cmd = make([]string, len(cmd))
+		for i, arg := range cmd {
+			if argStr, ok := arg.(string); ok {
+				finalStage.Environment.Cmd[i] = argStr
+			}
+		}
+	}
+
+	return TemplateResult{
+		Stages: []StageResult{buildStage, rootfsStage, finalStage},
+	}, nil
+}
+
+func rustApp(params map[string]any) (TemplateResult, error) {
+	repo, _ := params["repo"].(string)
+	binary, _ := params["binary"].(string)
+
+	// Build packages list (git is always needed)
+	packages := []string{"git"}
+	if pkgs, ok := params["packages"].([]any); ok {
+		for _, pkg := range pkgs {
+			if pkgStr, ok := pkg.(string); ok {
+				packages = append(packages, pkgStr)
+			}
+		}
+	}
+
+	// Build params for clone-and-build-rust
+	buildParams := map[string]any{
+		"repo": repo,
+	}
+	if workdir, ok := params["workdir"].(string); ok {
+		buildParams["workdir"] = workdir
+	}
+	if features, ok := params["features"].(string); ok {
+		buildParams["features"] = features
+	}
+	if patches, ok := params["patches"]; ok {
+		buildParams["patches"] = patches
+	}
+	if tag, ok := params["tag"].(string); ok {
+		buildParams["tag"] = tag
+	}
+
+	// Parse volumes early so we can use them in build stage
+	volumes, err := ParseVolumes(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
+	}
+
+	buildPipeline := []PipelineStepResult{
+		{
+			Uses: "clone-and-build-rust",
+			With: buildParams,
+		},
+	}
+
+	// Create volumes in build stage
+	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
+		buildPipeline = append(buildPipeline, *volumeStep)
+	}
+
+	buildStage := StageResult{
+		Name: "build",
+		Environment: EnvironmentResult{
+			BaseImage: "rust",
+			Packages:  packages,
+		},
+		Pipeline: buildPipeline,
+	}
+
+	rootfsPipeline := []PipelineStepResult{
+		{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      "/main",
+				To:        "/rootfs/" + binary,
 			},
 		},
 	}

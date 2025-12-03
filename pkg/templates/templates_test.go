@@ -31,21 +31,6 @@ func TestValidateTemplateParams(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:         "base with optional params",
-			templateName: "base",
-			params: map[string]any{
-				"packages": []any{"ca-certificates"},
-				"user":     "appuser",
-			},
-			wantErr: false,
-		},
-		{
-			name:         "base with no params",
-			templateName: "base",
-			params:       map[string]any{},
-			wantErr:      false,
-		},
-		{
 			name:         "unknown template",
 			templateName: "nonexistent",
 			params:       map[string]any{},
@@ -89,80 +74,6 @@ func TestGoBuilder(t *testing.T) {
 
 	if stage.Pipeline[0].Uses != "clone-and-build-go" {
 		t.Errorf("expected pipeline to use clone-and-build-go, got %s", stage.Pipeline[0].Uses)
-	}
-}
-
-func TestBase(t *testing.T) {
-	params := map[string]any{
-		"packages": []any{"ca-certificates", "tzdata"},
-		"user":     "appuser",
-		"workdir":  "/app",
-	}
-
-	result, err := base(params)
-	if err != nil {
-		t.Fatalf("base() error = %v", err)
-	}
-
-	if len(result.Stages) != 1 {
-		t.Fatalf("expected 1 stage, got %d", len(result.Stages))
-	}
-
-	stage := result.Stages[0]
-	if stage.Environment.BaseImage != "alpine" {
-		t.Errorf("expected base image alpine, got %s", stage.Environment.BaseImage)
-	}
-
-	if len(stage.Environment.Packages) != 2 {
-		t.Errorf("expected 2 packages, got %d", len(stage.Environment.Packages))
-	}
-
-	if stage.Environment.User != "appuser" {
-		t.Errorf("expected user appuser, got %s", stage.Environment.User)
-	}
-
-	if stage.Environment.WorkDir != "/app" {
-		t.Errorf("expected workdir /app, got %s", stage.Environment.WorkDir)
-	}
-}
-
-func TestBaseroot(t *testing.T) {
-	params := map[string]any{
-		"user":    "myuser",
-		"group":   "mygroup",
-		"uid":     1500,
-		"gid":     1500,
-		"workdir": "/app",
-	}
-
-	result, err := baseroot(params)
-	if err != nil {
-		t.Fatalf("baseroot() error = %v", err)
-	}
-
-	if len(result.Stages) != 1 {
-		t.Fatalf("expected 1 stage, got %d", len(result.Stages))
-	}
-
-	stage := result.Stages[0]
-	if stage.Environment.BaseImage != "alpine" {
-		t.Errorf("expected base image alpine, got %s", stage.Environment.BaseImage)
-	}
-
-	if len(stage.Pipeline) != 1 {
-		t.Errorf("expected 1 pipeline step, got %d", len(stage.Pipeline))
-	}
-
-	if stage.Pipeline[0].Uses != "setup-users-groups" {
-		t.Errorf("expected pipeline to use setup-users-groups, got %s", stage.Pipeline[0].Uses)
-	}
-
-	if stage.Environment.User != "myuser" {
-		t.Errorf("expected user myuser, got %s", stage.Environment.User)
-	}
-
-	if stage.Environment.WorkDir != "/app" {
-		t.Errorf("expected workdir /app, got %s", stage.Environment.WorkDir)
 	}
 }
 

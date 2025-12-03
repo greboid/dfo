@@ -521,51 +521,6 @@ stages:
 			},
 		},
 		{
-			name: "base template with optional params",
-			yaml: `package:
-  name: test
-stages:
-  - template: base
-    with:
-      packages: ["ca-certificates"]
-      user: appuser
-      workdir: /app`,
-			expectError: false,
-			checkStage: func(t *testing.T, stage Stage) {
-				if stage.Environment.BaseImage != "alpine" {
-					t.Errorf("expected base image alpine, got %q", stage.Environment.BaseImage)
-				}
-				if len(stage.Environment.Packages) != 1 {
-					t.Errorf("expected 1 package, got %d", len(stage.Environment.Packages))
-				}
-				if stage.Environment.User != "appuser" {
-					t.Errorf("expected user appuser, got %q", stage.Environment.User)
-				}
-			},
-		},
-		{
-			name: "baseroot template",
-			yaml: `package:
-  name: test
-stages:
-  - template: baseroot
-    with:
-      user: myuser
-      uid: 1500`,
-			expectError: false,
-			checkStage: func(t *testing.T, stage Stage) {
-				if stage.Environment.BaseImage != "alpine" {
-					t.Errorf("expected base image alpine, got %q", stage.Environment.BaseImage)
-				}
-				if stage.Environment.User != "myuser" {
-					t.Errorf("expected user myuser, got %q", stage.Environment.User)
-				}
-				if len(stage.Pipeline) != 1 {
-					t.Errorf("expected 1 pipeline step, got %d", len(stage.Pipeline))
-				}
-			},
-		},
-		{
 			name: "template with missing required param",
 			yaml: `package:
   name: test
@@ -592,11 +547,12 @@ stages:
 			yaml: `package:
   name: test
 stages:
-  - template: base
+  - template: go-builder
     environment:
       base-image: alpine
     with:
-      user: appuser`,
+      repo: https://github.com/owner/repo
+      output: /app/binary`,
 			expectError: true,
 			errorMsg:    "cannot specify both 'template' and 'environment'",
 		},
@@ -605,11 +561,12 @@ stages:
 			yaml: `package:
   name: test
 stages:
-  - template: base
+  - template: go-builder
     pipeline:
       - run: echo test
     with:
-      user: appuser`,
+      repo: https://github.com/owner/repo
+      output: /app/binary`,
 			expectError: true,
 			errorMsg:    "cannot specify both 'template' and 'pipeline'",
 		},
