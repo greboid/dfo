@@ -2,6 +2,8 @@ package templates
 
 import (
 	"fmt"
+
+	"github.com/greboid/dfo/pkg/pipelines"
 )
 
 // Volume defaults matching postgres-15 conventions
@@ -52,6 +54,7 @@ var Registry = map[string]TemplateFunc{
 	"go-builder":   goBuilder,
 	"rust-builder": rustBuilder,
 	"go-app":       goApp,
+	"multi-go-app": multiGoApp,
 	"rust-app":     rustApp,
 }
 
@@ -246,6 +249,12 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
 	}
 
+	// Parse extra-copies
+	extraCopies, err := ParseExtraCopies(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing extra-copies: %w", err)
+	}
+
 	buildPipeline := []PipelineStepResult{
 		{
 			Uses: "build-go-static",
@@ -290,6 +299,17 @@ func goApp(params map[string]any) (TemplateResult, error) {
 				FromStage: "build",
 				From:      vol.Path,
 				To:        "/rootfs" + vol.Path,
+			},
+		})
+	}
+
+	// Copy extra files from build stage
+	for _, ec := range extraCopies {
+		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      ec.From,
+				To:        "/rootfs" + ec.To,
 			},
 		})
 	}
@@ -487,11 +507,297 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 	}, nil
 }
 
+// BinarySpec represents a binary specification for multi-go-app
+type BinarySpec struct {
+	Repo       string
+	Package    string
+	Binary     string
+	GoTags     string
+	Ignore     string
+	Patches    []string
+	Entrypoint bool
+	Cgo        bool
+}
+
+// ParseBinaries extracts binary specifications from template params.
+func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
+	binariesParam, ok := params["binaries"]
+	if !ok {
+		return nil, fmt.Errorf("binaries parameter is required")
+	}
+
+	binariesList, ok := binariesParam.([]any)
+	if !ok {
+		return nil, fmt.Errorf("binaries must be a list")
+	}
+
+	if len(binariesList) == 0 {
+		return nil, fmt.Errorf("at least one binary must be specified")
+	}
+
+	binaries := make([]BinarySpec, 0, len(binariesList))
+	for i, b := range binariesList {
+		binaryMap, ok := b.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("binary at index %d must be a map", i)
+		}
+
+		repo, ok := binaryMap["repo"].(string)
+		if !ok || repo == "" {
+			return nil, fmt.Errorf("binary at index %d must have a repo", i)
+		}
+
+		binary, ok := binaryMap["binary"].(string)
+		if !ok || binary == "" {
+			return nil, fmt.Errorf("binary at index %d must have a binary name", i)
+		}
+
+		spec := BinarySpec{
+			Repo:   repo,
+			Binary: binary,
+		}
+
+		if pkg, ok := binaryMap["package"].(string); ok {
+			spec.Package = pkg
+		} else {
+			spec.Package = "."
+		}
+
+		if goTags, ok := binaryMap["go-tags"].(string); ok {
+			spec.GoTags = goTags
+		}
+
+		if ignore, ok := binaryMap["ignore"].(string); ok {
+			spec.Ignore = ignore
+		}
+
+		if patches, ok := binaryMap["patches"].([]any); ok {
+			for _, p := range patches {
+				if ps, ok := p.(string); ok {
+					spec.Patches = append(spec.Patches, ps)
+				}
+			}
+		}
+
+		if entrypoint, ok := binaryMap["entrypoint"].(bool); ok {
+			spec.Entrypoint = entrypoint
+		}
+
+		if cgo, ok := binaryMap["cgo"].(bool); ok {
+			spec.Cgo = cgo
+		}
+
+		binaries = append(binaries, spec)
+	}
+
+	return binaries, nil
+}
+
+func multiGoApp(params map[string]any) (TemplateResult, error) {
+	// Parse binaries
+	binaries, err := ParseBinaries(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing binaries: %w", err)
+	}
+
+	// Parse volumes
+	volumes, err := ParseVolumes(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
+	}
+
+	// Parse extra-copies
+	extraCopies, err := ParseExtraCopies(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing extra-copies: %w", err)
+	}
+
+	// Track which repos have been cloned (by URL -> workdir)
+	clonedRepos := make(map[string]string)
+
+	buildPipeline := []PipelineStepResult{}
+
+	// For each binary, clone repo if not already cloned, then build
+	for _, bin := range binaries {
+		workdir, alreadyCloned := clonedRepos[bin.Repo]
+		if !alreadyCloned {
+			// Determine workdir for this repo
+			workdir = "/src"
+			if ownerRepo := pipelines.ExtractGitHubOwnerRepo(bin.Repo); ownerRepo != "" {
+				workdir = "/src/" + ownerRepo
+			}
+			clonedRepos[bin.Repo] = workdir
+
+			// Add clone step
+			buildPipeline = append(buildPipeline, PipelineStepResult{
+				Uses: "clone",
+				With: map[string]any{
+					"repo":    bin.Repo,
+					"workdir": workdir,
+				},
+			})
+		}
+
+		// Build params for this binary
+		buildParams := map[string]any{
+			"workdir": workdir,
+			"package": bin.Package,
+			"output":  "/" + bin.Binary,
+		}
+		if bin.Ignore != "" {
+			buildParams["ignore"] = bin.Ignore
+		}
+		if bin.GoTags != "" {
+			buildParams["go-tags"] = bin.GoTags
+		}
+		if bin.Cgo {
+			buildParams["cgo"] = bin.Cgo
+		}
+
+		// Add build step (using build-go-only pipeline which doesn't clone)
+		buildPipeline = append(buildPipeline, PipelineStepResult{
+			Uses: "build-go-only",
+			With: buildParams,
+		})
+	}
+
+	// Create volumes in build stage
+	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
+		buildPipeline = append(buildPipeline, *volumeStep)
+	}
+
+	buildStage := StageResult{
+		Name: "build",
+		Environment: EnvironmentResult{
+			BaseImage: "golang",
+		},
+		Pipeline: buildPipeline,
+	}
+
+	// Build rootfs pipeline
+	rootfsPipeline := []PipelineStepResult{}
+
+	// Copy each binary
+	for _, bin := range binaries {
+		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      "/" + bin.Binary,
+				To:        "/rootfs/" + bin.Binary,
+			},
+		})
+	}
+
+	// Copy license notices for each binary
+	for _, bin := range binaries {
+		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      "/notices/" + bin.Binary,
+				To:        "/rootfs/notices/" + bin.Binary,
+			},
+		})
+	}
+
+	// Copy volumes from build stage
+	for _, vol := range volumes {
+		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      vol.Path,
+				To:        "/rootfs" + vol.Path,
+			},
+		})
+	}
+
+	// Copy extra files from build stage
+	for _, ec := range extraCopies {
+		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
+			Copy: &CopyStepResult{
+				FromStage: "build",
+				From:      ec.From,
+				To:        "/rootfs" + ec.To,
+			},
+		})
+	}
+
+	rootfsStage := StageResult{
+		Name: "rootfs",
+		Environment: EnvironmentResult{
+			BaseImage: "base",
+		},
+		Pipeline: rootfsPipeline,
+	}
+
+	// Determine entrypoint binary
+	entrypointBinary := binaries[0].Binary
+	for _, bin := range binaries {
+		if bin.Entrypoint {
+			entrypointBinary = bin.Binary
+			break
+		}
+	}
+
+	finalStage := StageResult{
+		Name: "final",
+		Environment: EnvironmentResult{
+			BaseImage:  "base",
+			Entrypoint: []string{"/" + entrypointBinary},
+		},
+		Pipeline: []PipelineStepResult{
+			{
+				Copy: &CopyStepResult{
+					FromStage: "rootfs",
+					From:      "/rootfs/",
+					To:        "/",
+				},
+			},
+		},
+	}
+
+	if expose, ok := params["expose"].([]any); ok {
+		finalStage.Environment.Expose = make([]string, len(expose))
+		for i, port := range expose {
+			if portStr, ok := port.(string); ok {
+				finalStage.Environment.Expose[i] = portStr
+			}
+		}
+	}
+
+	if entrypoint, ok := params["entrypoint"].([]any); ok {
+		finalStage.Environment.Entrypoint = make([]string, len(entrypoint))
+		for i, arg := range entrypoint {
+			if argStr, ok := arg.(string); ok {
+				finalStage.Environment.Entrypoint[i] = argStr
+			}
+		}
+	}
+
+	if cmd, ok := params["cmd"].([]any); ok {
+		finalStage.Environment.Cmd = make([]string, len(cmd))
+		for i, arg := range cmd {
+			if argStr, ok := arg.(string); ok {
+				finalStage.Environment.Cmd[i] = argStr
+			}
+		}
+	}
+
+	return TemplateResult{
+		Stages: []StageResult{buildStage, rootfsStage, finalStage},
+	}, nil
+}
+
 // VolumeSpec represents a volume directory specification
 type VolumeSpec struct {
 	Path        string
 	Owner       string
 	Permissions string
+}
+
+// ExtraCopySpec represents an extra file/directory to copy
+type ExtraCopySpec struct {
+	From string
+	To   string
 }
 
 // ParseVolumes extracts volume specifications from template params.
@@ -562,4 +868,43 @@ func CreateVolumesStep(volumes []VolumeSpec) *PipelineStepResult {
 			"directories": directories,
 		},
 	}
+}
+
+// ParseExtraCopies extracts extra-copy specifications from template params.
+// Each extra-copy must specify from (required) and to (required).
+func ParseExtraCopies(params map[string]any) ([]ExtraCopySpec, error) {
+	copiesParam, ok := params["extra-copies"]
+	if !ok {
+		return nil, nil
+	}
+
+	copiesList, ok := copiesParam.([]any)
+	if !ok {
+		return nil, fmt.Errorf("extra-copies must be a list")
+	}
+
+	copies := make([]ExtraCopySpec, 0, len(copiesList))
+	for i, c := range copiesList {
+		copyMap, ok := c.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("extra-copy at index %d must be a map", i)
+		}
+
+		from, ok := copyMap["from"].(string)
+		if !ok || from == "" {
+			return nil, fmt.Errorf("extra-copy at index %d must have a 'from' path", i)
+		}
+
+		to, ok := copyMap["to"].(string)
+		if !ok || to == "" {
+			return nil, fmt.Errorf("extra-copy at index %d must have a 'to' path", i)
+		}
+
+		copies = append(copies, ExtraCopySpec{
+			From: from,
+			To:   to,
+		})
+	}
+
+	return copies, nil
 }

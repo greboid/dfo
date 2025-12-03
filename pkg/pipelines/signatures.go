@@ -110,6 +110,18 @@ var Signatures = map[string]PipelineSignature{
 			"patches": {Type: TypeStringArray, Required: false, Description: "Patch files to apply"},
 		},
 	},
+	"build-go-only": {
+		Name:        "build-go-only",
+		Description: "Build a statically linked Go binary (without cloning - repo must already be cloned)",
+		Parameters: map[string]ParamSpec{
+			"workdir": {Type: TypeString, Required: true, Description: "Working directory where repo is already cloned"},
+			"package": {Type: TypeString, Required: false, Description: "Go package to build (default: .)"},
+			"output":  {Type: TypeString, Required: false, Description: "Output binary path (default: /main)"},
+			"ignore":  {Type: TypeString, Required: false, Description: "Packages to ignore for license generation"},
+			"go-tags": {Type: TypeString, Required: false, Description: "Additional Go build tags (default: netgo,osusergo)"},
+			"cgo":     {Type: TypeBool, Required: false, Description: "Enable CGO (default: false)"},
+		},
+	},
 	"clone-and-build-rust": {
 		Name:        "clone-and-build-rust",
 		Description: "Clone a Rust repository and build it",

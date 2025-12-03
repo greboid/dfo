@@ -29,6 +29,7 @@ var Registry = map[string]Pipeline{
 	"clone":                    Clone,
 	"clone-and-build-go":       CloneAndBuildGo,
 	"build-go-static":          BuildGo,
+	"build-go-only":            BuildGoOnly,
 	"clone-and-build-rust":     CloneAndBuildRust,
 	"clone-and-build-make":     CloneAndBuildMake,
 	"clone-and-build-autoconf": CloneAndBuildAutoconf,
@@ -241,7 +242,7 @@ func validateArchiveFormat(filename string) error {
 	return fmt.Errorf("unsupported archive format: %s (supported: .zip, .tar, .tar.gz, .tgz, .tar.bz2, .tbz2, .tar.xz, .txz)", filename)
 }
 
-func extractGitHubOwnerRepo(repoURL string) string {
+func ExtractGitHubOwnerRepo(repoURL string) string {
 	if !strings.Contains(repoURL, "github.com") {
 		return ""
 	}
@@ -267,7 +268,7 @@ func extractGitHubOwnerRepo(repoURL string) string {
 
 func extractRepoWorkdir(repo string, params map[string]any) (string, error) {
 	defaultWorkdir := "/src"
-	if ownerRepo := extractGitHubOwnerRepo(repo); ownerRepo != "" {
+	if ownerRepo := ExtractGitHubOwnerRepo(repo); ownerRepo != "" {
 		defaultWorkdir = "/src/" + ownerRepo
 	}
 	return util.ValidateOptionalStringParamStrict(params, "workdir", defaultWorkdir)
@@ -313,7 +314,7 @@ func generateCloneStep(repo, tag, commit, workdir string) Step {
 	} else if tag != "" {
 		cloneCmd = fmt.Sprintf("RUN git clone --depth=1 --branch %s %q %s\n", tag, repo, workdir)
 	} else {
-		ownerRepo := extractGitHubOwnerRepo(repo)
+		ownerRepo := ExtractGitHubOwnerRepo(repo)
 		if ownerRepo != "" {
 			cloneCmd = fmt.Sprintf("RUN git clone --depth=1 --branch {{github_tag %q}} %q %s\n", ownerRepo, repo, workdir)
 		} else {
@@ -528,6 +529,54 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 	return PipelineResult{
 		Steps:     steps,
 		BuildDeps: buildDeps,
+	}, nil
+}
+
+// BuildGoOnly builds a Go binary without cloning (assumes repo is already cloned)
+func BuildGoOnly(params map[string]any) (PipelineResult, error) {
+	if err := ValidateParams("build-go-only", params); err != nil {
+		return PipelineResult{}, err
+	}
+
+	workdir, err := util.ValidateStringParam(params, "workdir")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
+	pkg, err := util.ValidateOptionalStringParamStrict(params, "package", ".")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
+	output, err := util.ValidateOptionalStringParamStrict(params, "output", "/main")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
+	ignore, err := util.ValidateOptionalStringParamStrict(params, "ignore", "")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
+	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
+	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
+	steps := []Step{
+		generateGoModDownloadStep(workdir),
+		generateGoBuildStep(pkg, output, "", goTags, cgo),
+		generateLicenseStep(pkg, output, ignore),
+	}
+
+	return PipelineResult{
+		Steps:     steps,
+		BuildDeps: []string{"go"},
 	}, nil
 }
 
