@@ -1990,6 +1990,133 @@ func TestCloneAndBuildGoWithPatches(t *testing.T) {
 	}
 }
 
+func TestBuildGoOnly(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]any
+		wantErr bool
+		check   func(*testing.T, PipelineResult)
+	}{
+		{
+			name: "minimal parameters",
+			params: map[string]any{
+				"workdir": "/src/example/repo",
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				if len(steps) != 3 {
+					t.Errorf("expected 3 steps (mod download + build + license), got %d", len(steps))
+				}
+				// Check go mod download step
+				if !strings.Contains(steps[0].Content, "go mod download") {
+					t.Errorf("expected go mod download, got: %s", steps[0].Content)
+				}
+				// Check build step
+				if !strings.Contains(steps[1].Content, "go build") {
+					t.Errorf("expected go build, got: %s", steps[1].Content)
+				}
+				// Check default output is /main
+				if !strings.Contains(steps[1].Content, "-o /main") {
+					t.Errorf("expected default output /main, got: %s", steps[1].Content)
+				}
+				// Check default package is .
+				if !strings.Contains(steps[1].Content, "go build") {
+					t.Errorf("expected go build command, got: %s", steps[1].Content)
+				}
+			},
+		},
+		{
+			name: "with custom package and output",
+			params: map[string]any{
+				"workdir": "/src/example/repo",
+				"package": "./cmd/myapp",
+				"output":  "/myapp",
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				// Check custom output
+				if !strings.Contains(steps[1].Content, "-o /myapp") {
+					t.Errorf("expected output /myapp, got: %s", steps[1].Content)
+				}
+				// Check custom package
+				if !strings.Contains(steps[1].Content, "./cmd/myapp") {
+					t.Errorf("expected package ./cmd/myapp, got: %s", steps[1].Content)
+				}
+			},
+		},
+		{
+			name: "with go-tags",
+			params: map[string]any{
+				"workdir": "/src/example/repo",
+				"go-tags": "moderncsqlite",
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				// go-tags are combined with default tags
+				if !strings.Contains(steps[1].Content, "moderncsqlite") {
+					t.Errorf("expected custom tag in build command, got: %s", steps[1].Content)
+				}
+			},
+		},
+		{
+			name: "with cgo enabled",
+			params: map[string]any{
+				"workdir": "/src/example/repo",
+				"cgo":     true,
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				if !strings.Contains(steps[1].Content, "CGO_ENABLED=1") {
+					t.Errorf("expected CGO_ENABLED=1, got: %s", steps[1].Content)
+				}
+			},
+		},
+		{
+			name: "with ignore parameter",
+			params: map[string]any{
+				"workdir": "/src/example/repo",
+				"ignore":  "modernc.org/mathutil",
+			},
+			wantErr: false,
+			check: func(t *testing.T, result PipelineResult) {
+				steps := result.Steps
+				if !strings.Contains(steps[2].Content, "--ignore modernc.org/mathutil") {
+					t.Errorf("expected ignore in license step, got: %s", steps[2].Content)
+				}
+			},
+		},
+		{
+			name:    "missing workdir",
+			params:  map[string]any{},
+			wantErr: true,
+		},
+		{
+			name: "workdir wrong type",
+			params: map[string]any{
+				"workdir": 123,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := BuildGoOnly(tt.params)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("BuildGoOnly() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
 func TestCopyFiles(t *testing.T) {
 	tests := []struct {
 		name    string

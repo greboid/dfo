@@ -818,6 +818,474 @@ func TestParseExtraCopies(t *testing.T) {
 	}
 }
 
+func TestRustBuilder(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]any
+		check  func(*testing.T, TemplateResult)
+	}{
+		{
+			name: "minimal parameters",
+			params: map[string]any{
+				"repo": "https://github.com/example/rustapp",
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				if len(result.Stages) != 1 {
+					t.Fatalf("expected 1 stage, got %d", len(result.Stages))
+				}
+				stage := result.Stages[0]
+				if stage.Environment.BaseImage != "rust" {
+					t.Errorf("expected base image rust, got %s", stage.Environment.BaseImage)
+				}
+				// Default packages should include git
+				if len(stage.Environment.Packages) != 1 || stage.Environment.Packages[0] != "git" {
+					t.Errorf("expected packages [git], got %v", stage.Environment.Packages)
+				}
+				if len(stage.Pipeline) != 1 {
+					t.Errorf("expected 1 pipeline step, got %d", len(stage.Pipeline))
+				}
+				if stage.Pipeline[0].Uses != "clone-and-build-rust" {
+					t.Errorf("expected clone-and-build-rust, got %s", stage.Pipeline[0].Uses)
+				}
+			},
+		},
+		{
+			name: "with additional packages",
+			params: map[string]any{
+				"repo":     "https://github.com/example/rustapp",
+				"packages": []any{"openssl-dev", "sqlite-dev"},
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				stage := result.Stages[0]
+				// Should have git plus the additional packages
+				expectedPkgs := []string{"git", "openssl-dev", "sqlite-dev"}
+				if len(stage.Environment.Packages) != 3 {
+					t.Errorf("expected 3 packages, got %v", stage.Environment.Packages)
+				}
+				for i, pkg := range expectedPkgs {
+					if stage.Environment.Packages[i] != pkg {
+						t.Errorf("expected package %s at index %d, got %s", pkg, i, stage.Environment.Packages[i])
+					}
+				}
+				// Packages should not be passed to pipeline
+				if _, ok := stage.Pipeline[0].With["packages"]; ok {
+					t.Error("packages should not be passed to pipeline")
+				}
+			},
+		},
+		{
+			name: "passes other params to pipeline",
+			params: map[string]any{
+				"repo":     "https://github.com/example/rustapp",
+				"features": "sqlite",
+				"tag":      "v1.0.0",
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				stage := result.Stages[0]
+				with := stage.Pipeline[0].With
+				if with["features"] != "sqlite" {
+					t.Errorf("expected features=sqlite, got %v", with["features"])
+				}
+				if with["tag"] != "v1.0.0" {
+					t.Errorf("expected tag=v1.0.0, got %v", with["tag"])
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := rustBuilder(tt.params)
+			if err != nil {
+				t.Fatalf("rustBuilder() error = %v", err)
+			}
+			tt.check(t, result)
+		})
+	}
+}
+
+func TestRustApp(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]any
+		wantErr bool
+		check   func(*testing.T, TemplateResult)
+	}{
+		{
+			name: "minimal parameters",
+			params: map[string]any{
+				"repo":   "https://github.com/example/rustapp",
+				"binary": "myapp",
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				if len(result.Stages) != 3 {
+					t.Fatalf("expected 3 stages, got %d", len(result.Stages))
+				}
+
+				buildStage := result.Stages[0]
+				if buildStage.Name != "build" {
+					t.Errorf("expected build stage name 'build', got %q", buildStage.Name)
+				}
+				if buildStage.Environment.BaseImage != "rust" {
+					t.Errorf("expected rust base image, got %s", buildStage.Environment.BaseImage)
+				}
+				// Should have git package
+				if len(buildStage.Environment.Packages) < 1 || buildStage.Environment.Packages[0] != "git" {
+					t.Errorf("expected git package, got %v", buildStage.Environment.Packages)
+				}
+
+				rootfsStage := result.Stages[1]
+				if rootfsStage.Name != "rootfs" {
+					t.Errorf("expected rootfs stage name 'rootfs', got %q", rootfsStage.Name)
+				}
+				// Should have binary copy step
+				if len(rootfsStage.Pipeline) < 1 {
+					t.Error("expected at least 1 copy step in rootfs")
+				}
+				if rootfsStage.Pipeline[0].Copy == nil {
+					t.Error("expected copy step")
+				} else if rootfsStage.Pipeline[0].Copy.To != "/rootfs/myapp" {
+					t.Errorf("expected binary copy to /rootfs/myapp, got %s", rootfsStage.Pipeline[0].Copy.To)
+				}
+
+				finalStage := result.Stages[2]
+				if finalStage.Name != "final" {
+					t.Errorf("expected final stage name 'final', got %q", finalStage.Name)
+				}
+				if len(finalStage.Environment.Entrypoint) == 0 || finalStage.Environment.Entrypoint[0] != "/myapp" {
+					t.Errorf("expected entrypoint /myapp, got %v", finalStage.Environment.Entrypoint)
+				}
+			},
+		},
+		{
+			name: "with packages",
+			params: map[string]any{
+				"repo":     "https://github.com/example/rustapp",
+				"binary":   "myapp",
+				"packages": []any{"openssl-dev"},
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				buildStage := result.Stages[0]
+				// Should have git + openssl-dev
+				if len(buildStage.Environment.Packages) != 2 {
+					t.Errorf("expected 2 packages, got %v", buildStage.Environment.Packages)
+				}
+			},
+		},
+		{
+			name: "with features and tag",
+			params: map[string]any{
+				"repo":     "https://github.com/example/rustapp",
+				"binary":   "myapp",
+				"features": "sqlite,mimalloc",
+				"tag":      "v2.0.0",
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				buildStage := result.Stages[0]
+				with := buildStage.Pipeline[0].With
+				if with["features"] != "sqlite,mimalloc" {
+					t.Errorf("expected features, got %v", with["features"])
+				}
+				if with["tag"] != "v2.0.0" {
+					t.Errorf("expected tag, got %v", with["tag"])
+				}
+			},
+		},
+		{
+			name: "with expose, entrypoint, and cmd",
+			params: map[string]any{
+				"repo":       "https://github.com/example/rustapp",
+				"binary":     "myapp",
+				"expose":     []any{"8080", "9090"},
+				"entrypoint": []any{"/myapp", "--config", "/etc/config.yaml"},
+				"cmd":        []any{"serve"},
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				finalStage := result.Stages[2]
+				if len(finalStage.Environment.Expose) != 2 {
+					t.Errorf("expected 2 exposed ports, got %v", finalStage.Environment.Expose)
+				}
+				if len(finalStage.Environment.Entrypoint) != 3 {
+					t.Errorf("expected 3 entrypoint args, got %v", finalStage.Environment.Entrypoint)
+				}
+				if len(finalStage.Environment.Cmd) != 1 || finalStage.Environment.Cmd[0] != "serve" {
+					t.Errorf("expected cmd [serve], got %v", finalStage.Environment.Cmd)
+				}
+			},
+		},
+		{
+			name: "with volumes",
+			params: map[string]any{
+				"repo":   "https://github.com/example/rustapp",
+				"binary": "myapp",
+				"volumes": []any{
+					map[string]any{"path": "/data"},
+				},
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				buildStage := result.Stages[0]
+				// Should have create-directories step
+				hasCreateDirs := false
+				for _, step := range buildStage.Pipeline {
+					if step.Uses == "create-directories" {
+						hasCreateDirs = true
+						break
+					}
+				}
+				if !hasCreateDirs {
+					t.Error("expected create-directories step in build stage")
+				}
+
+				rootfsStage := result.Stages[1]
+				// Should have volume copy step
+				hasVolumeCopy := false
+				for _, step := range rootfsStage.Pipeline {
+					if step.Copy != nil && step.Copy.From == "/data" {
+						hasVolumeCopy = true
+						break
+					}
+				}
+				if !hasVolumeCopy {
+					t.Error("expected volume copy step in rootfs stage")
+				}
+			},
+		},
+		{
+			name: "with patches",
+			params: map[string]any{
+				"repo":    "https://github.com/example/rustapp",
+				"binary":  "myapp",
+				"patches": []any{"fix.patch"},
+			},
+			check: func(t *testing.T, result TemplateResult) {
+				buildStage := result.Stages[0]
+				with := buildStage.Pipeline[0].With
+				if patches, ok := with["patches"].([]any); !ok || len(patches) != 1 {
+					t.Errorf("expected patches to be passed through, got %v", with["patches"])
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := rustApp(tt.params)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("rustApp() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
+func TestParseVolumes(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]any
+		want    []VolumeSpec
+		wantErr bool
+	}{
+		{
+			name:   "no volumes",
+			params: map[string]any{},
+			want:   nil,
+		},
+		{
+			name: "single volume with defaults",
+			params: map[string]any{
+				"volumes": []any{
+					map[string]any{"path": "/data"},
+				},
+			},
+			want: []VolumeSpec{
+				{Path: "/data", Owner: DefaultVolumeOwner, Permissions: DefaultVolumePermissions},
+			},
+		},
+		{
+			name: "single volume with custom owner",
+			params: map[string]any{
+				"volumes": []any{
+					map[string]any{
+						"path":  "/data",
+						"owner": "1000:1000",
+					},
+				},
+			},
+			want: []VolumeSpec{
+				{Path: "/data", Owner: "1000:1000", Permissions: DefaultVolumePermissions},
+			},
+		},
+		{
+			name: "single volume with custom permissions",
+			params: map[string]any{
+				"volumes": []any{
+					map[string]any{
+						"path":        "/data",
+						"permissions": "755",
+					},
+				},
+			},
+			want: []VolumeSpec{
+				{Path: "/data", Owner: DefaultVolumeOwner, Permissions: "755"},
+			},
+		},
+		{
+			name: "multiple volumes",
+			params: map[string]any{
+				"volumes": []any{
+					map[string]any{"path": "/data"},
+					map[string]any{
+						"path":        "/config",
+						"owner":       "root:root",
+						"permissions": "700",
+					},
+				},
+			},
+			want: []VolumeSpec{
+				{Path: "/data", Owner: DefaultVolumeOwner, Permissions: DefaultVolumePermissions},
+				{Path: "/config", Owner: "root:root", Permissions: "700"},
+			},
+		},
+		{
+			name: "volumes not a list",
+			params: map[string]any{
+				"volumes": "invalid",
+			},
+			wantErr: true,
+		},
+		{
+			name: "volume not a map",
+			params: map[string]any{
+				"volumes": []any{"/data"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "volume missing path",
+			params: map[string]any{
+				"volumes": []any{
+					map[string]any{"owner": "1000:1000"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "volume empty path",
+			params: map[string]any{
+				"volumes": []any{
+					map[string]any{"path": ""},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseVolumes(tt.params)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseVolumes() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				if len(got) != len(tt.want) {
+					t.Errorf("ParseVolumes() got %d items, want %d", len(got), len(tt.want))
+					return
+				}
+				for i := range got {
+					if got[i].Path != tt.want[i].Path ||
+						got[i].Owner != tt.want[i].Owner ||
+						got[i].Permissions != tt.want[i].Permissions {
+						t.Errorf("ParseVolumes()[%d] = %+v, want %+v", i, got[i], tt.want[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCreateVolumesStep(t *testing.T) {
+	tests := []struct {
+		name    string
+		volumes []VolumeSpec
+		want    *PipelineStepResult
+	}{
+		{
+			name:    "empty volumes",
+			volumes: []VolumeSpec{},
+			want:    nil,
+		},
+		{
+			name:    "nil volumes",
+			volumes: nil,
+			want:    nil,
+		},
+		{
+			name: "single volume",
+			volumes: []VolumeSpec{
+				{Path: "/data", Owner: "1000:1000", Permissions: "755"},
+			},
+			want: &PipelineStepResult{
+				Uses: "create-directories",
+				With: map[string]any{
+					"directories": []map[string]any{
+						{"path": "/data", "owner": "1000:1000", "permissions": "755"},
+					},
+				},
+			},
+		},
+		{
+			name: "multiple volumes",
+			volumes: []VolumeSpec{
+				{Path: "/data", Owner: "1000:1000", Permissions: "755"},
+				{Path: "/config", Owner: "root:root", Permissions: "700"},
+			},
+			want: &PipelineStepResult{
+				Uses: "create-directories",
+				With: map[string]any{
+					"directories": []map[string]any{
+						{"path": "/data", "owner": "1000:1000", "permissions": "755"},
+						{"path": "/config", "owner": "root:root", "permissions": "700"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CreateVolumesStep(tt.volumes)
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("CreateVolumesStep() = %v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("CreateVolumesStep() = nil, want non-nil")
+			}
+			if got.Uses != tt.want.Uses {
+				t.Errorf("CreateVolumesStep().Uses = %s, want %s", got.Uses, tt.want.Uses)
+			}
+			gotDirs := got.With["directories"].([]map[string]any)
+			wantDirs := tt.want.With["directories"].([]map[string]any)
+			if len(gotDirs) != len(wantDirs) {
+				t.Errorf("directories count = %d, want %d", len(gotDirs), len(wantDirs))
+				return
+			}
+			for i := range gotDirs {
+				if gotDirs[i]["path"] != wantDirs[i]["path"] ||
+					gotDirs[i]["owner"] != wantDirs[i]["owner"] ||
+					gotDirs[i]["permissions"] != wantDirs[i]["permissions"] {
+					t.Errorf("directories[%d] = %v, want %v", i, gotDirs[i], wantDirs[i])
+				}
+			}
+		})
+	}
+}
+
 func TestParseBinaries(t *testing.T) {
 	tests := []struct {
 		name    string
