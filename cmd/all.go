@@ -10,7 +10,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var allDirectory string
+var (
+	allDirectory     string
+	allAlpineVersion string
+)
 
 var allCmd = &cobra.Command{
 	Use:   "all",
@@ -22,6 +25,7 @@ func init() {
 	rootCmd.AddCommand(allCmd)
 
 	allCmd.Flags().StringVarP(&allDirectory, "directory", "d", ".", "Directory to search for dfo.yaml files")
+	allCmd.Flags().StringVar(&allAlpineVersion, "alpine-version", "", "Alpine Linux version to resolve packages against (default: auto-detect latest)")
 }
 
 func runAll(_ *cobra.Command, _ []string) error {
@@ -29,8 +33,18 @@ func runAll(_ *cobra.Command, _ []string) error {
 
 	fs := util.DefaultFS()
 
+	resolvedVersion := allAlpineVersion
+	if resolvedVersion == "" {
+		latest, err := alpineClient.GetLatestStableVersion()
+		if err != nil {
+			return fmt.Errorf("failed to detect latest Alpine version: %w", err)
+		}
+		resolvedVersion = latest
+		fmt.Printf("Auto-detected Alpine version: %s\n", resolvedVersion)
+	}
+
 	fileProcessor := func(configPath string) error {
-		result, err := processor.ProcessConfigInPlace(fs, configPath)
+		result, err := processor.ProcessConfigInPlace(fs, configPath, alpineClient, resolvedVersion)
 		if err != nil {
 			return err
 		}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/greboid/dfo/pkg/config"
+	"github.com/greboid/dfo/pkg/packages"
 	"github.com/greboid/dfo/pkg/util"
 )
 
@@ -249,141 +250,144 @@ func TestGenerateFetchStep(t *testing.T) {
 }
 
 func TestGeneratePackageInstallForEnv(t *testing.T) {
-	g := &Generator{
-		config: &config.BuildConfig{},
-	}
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{}
+	g := New(cfg, "output", fs, client, "3.19")
 
 	tests := []struct {
 		name     string
 		env      config.Environment
-		expected string
+		contains []string
 	}{
 		{
 			name: "single package",
 			env: config.Environment{
 				Packages: []string{"git"},
 			},
-			expected: `# Install packages
-RUN set -eux; \
-    apk add --no-cache \
-    {{- range $key, $value := alpine_packages "git"}}
-        {{$key}}={{$value}} \
-    {{- end}}
-    ;
-`,
+			contains: []string{
+				"# Install packages",
+				"RUN set -eux;",
+				"apk add --no-cache",
+				"git=",
+			},
 		},
 		{
 			name: "multiple packages",
 			env: config.Environment{
 				Packages: []string{"git", "ca-certificates", "musl"},
 			},
-			expected: `# Install packages
-RUN set -eux; \
-    apk add --no-cache \
-    {{- range $key, $value := alpine_packages "git" "ca-certificates" "musl"}}
-        {{$key}}={{$value}} \
-    {{- end}}
-    ;
-`,
+			contains: []string{
+				"# Install packages",
+				"RUN set -eux;",
+				"apk add --no-cache",
+				"git=",
+				"ca-certificates=",
+				"musl=",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := g.generatePackageInstallForEnv(tt.env)
-			if result != tt.expected {
-				t.Errorf("expected:\n%s\ngot:\n%s", tt.expected, result)
+			result, err := g.generatePackageInstallForEnv(tt.env)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, substr := range tt.contains {
+				if !strings.Contains(result, substr) {
+					t.Errorf("expected result to contain %q, got:\n%s", substr, result)
+				}
 			}
 		})
 	}
 }
 
 func TestGenerateRootfsPackageInstallForEnv(t *testing.T) {
-	g := &Generator{
-		config: &config.BuildConfig{},
-	}
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{}
+	g := New(cfg, "output", fs, client, "3.19")
 
 	tests := []struct {
 		name     string
 		env      config.Environment
-		expected string
+		contains []string
 	}{
 		{
 			name: "single rootfs package",
 			env: config.Environment{
 				RootfsPackages: []string{"busybox"},
 			},
-			expected: `# Install packages into rootfs
-RUN \
-{{- range $key, $value := alpine_packages "busybox"}}
-    apk add --no-cache {{$key}}={{$value}}; \
-    apk info -qL {{$key}} | rsync -aq --files-from=- / /rootfs/; \
-{{- end}}
-    true
-`,
+			contains: []string{
+				"# Install packages into rootfs",
+				"apk add --no-cache busybox=",
+				"apk info -qL busybox",
+				"rsync -aq --files-from=- / /rootfs/",
+			},
 		},
 		{
 			name: "multiple rootfs packages",
 			env: config.Environment{
 				RootfsPackages: []string{"busybox", "musl", "ca-certificates"},
 			},
-			expected: `# Install packages into rootfs
-RUN \
-{{- range $key, $value := alpine_packages "busybox" "musl" "ca-certificates"}}
-    apk add --no-cache {{$key}}={{$value}}; \
-    apk info -qL {{$key}} | rsync -aq --files-from=- / /rootfs/; \
-{{- end}}
-    true
-`,
+			contains: []string{
+				"# Install packages into rootfs",
+				"apk add --no-cache busybox=",
+				"apk add --no-cache musl=",
+				"apk add --no-cache ca-certificates=",
+				"rsync -aq --files-from=- / /rootfs/",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := g.generateRootfsPackageInstallForEnv(tt.env)
-			if result != tt.expected {
-				t.Errorf("expected:\n%s\ngot:\n%s", tt.expected, result)
+			for _, substr := range tt.contains {
+				if !strings.Contains(result, substr) {
+					t.Errorf("expected result to contain %q, got:\n%s", substr, result)
+				}
 			}
 		})
 	}
 }
 
 func TestGenerateRunWithBuildDeps(t *testing.T) {
-	g := &Generator{
-		config: &config.BuildConfig{},
-	}
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{}
+	g := New(cfg, "output", fs, client, "3.19")
 
 	tests := []struct {
 		name      string
 		runCmd    string
 		buildDeps []string
-		expected  string
+		contains  []string
 	}{
 		{
 			name:      "single build dependency",
 			runCmd:    "go build -o /app/binary",
 			buildDeps: []string{"go"},
-			expected: `RUN apk add --no-cache --virtual .build-deps \
-  {{- range $key, $value := alpine_packages "go"}}
-  {{$key}}={{$value}} \
-  {{- end}}
-  ; \
-  go build -o /app/binary; \
-  apk del --no-network .build-deps
-`,
+			contains: []string{
+				"RUN apk add --no-cache --virtual .build-deps",
+				"go=",
+				"go build -o /app/binary",
+				"apk del --no-network .build-deps",
+			},
 		},
 		{
 			name:      "multiple build dependencies",
 			runCmd:    "make install",
 			buildDeps: []string{"make", "gcc", "musl-dev"},
-			expected: `RUN apk add --no-cache --virtual .build-deps \
-  {{- range $key, $value := alpine_packages "make" "gcc" "musl-dev"}}
-  {{$key}}={{$value}} \
-  {{- end}}
-  ; \
-  make install; \
-  apk del --no-network .build-deps
-`,
+			contains: []string{
+				"RUN apk add --no-cache --virtual .build-deps",
+				"make=",
+				"gcc=",
+				"musl-dev=",
+				"make install",
+				"apk del --no-network .build-deps",
+			},
 		},
 		{
 			name: "multi-line run command",
@@ -391,16 +395,14 @@ func TestGenerateRunWithBuildDeps(t *testing.T) {
 make
 make install`,
 			buildDeps: []string{"make"},
-			expected: `RUN apk add --no-cache --virtual .build-deps \
-  {{- range $key, $value := alpine_packages "make"}}
-  {{$key}}={{$value}} \
-  {{- end}}
-  ; \
-  cd /build; \
-  make; \
-  make install; \
-  apk del --no-network .build-deps
-`,
+			contains: []string{
+				"RUN apk add --no-cache --virtual .build-deps",
+				"make=",
+				"cd /build",
+				"make",
+				"make install",
+				"apk del --no-network .build-deps",
+			},
 		},
 		{
 			name: "multi-line with continuation backslash",
@@ -409,25 +411,25 @@ make install`,
   /path/two
 echo done`,
 			buildDeps: []string{"make"},
-			expected: `RUN apk add --no-cache --virtual .build-deps \
-  {{- range $key, $value := alpine_packages "make"}}
-  {{$key}}={{$value}} \
-  {{- end}}
-  ; \
-  rm -rf \
-  /path/one \
-  /path/two; \
-  echo done; \
-  apk del --no-network .build-deps
-`,
+			contains: []string{
+				"RUN apk add --no-cache --virtual .build-deps",
+				"make=",
+				"rm -rf",
+				"/path/one",
+				"/path/two",
+				"echo done",
+				"apk del --no-network .build-deps",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := g.generateRunWithBuildDeps(tt.runCmd, tt.buildDeps)
-			if result != tt.expected {
-				t.Errorf("expected:\n%s\ngot:\n%s", tt.expected, result)
+			for _, substr := range tt.contains {
+				if !strings.Contains(result, substr) {
+					t.Errorf("expected result to contain %q, got:\n%s", substr, result)
+				}
 			}
 		})
 	}
@@ -439,8 +441,9 @@ func TestNew(t *testing.T) {
 	}
 	outputDir := "output"
 	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
 
-	g := New(cfg, outputDir, fs)
+	g := New(cfg, outputDir, fs, client, "3.19")
 
 	if g.config != cfg {
 		t.Error("config not set correctly")
@@ -455,7 +458,8 @@ func TestNew(t *testing.T) {
 
 func TestSetOutputFilename(t *testing.T) {
 	fs := util.NewTestFS()
-	g := New(&config.BuildConfig{}, "tmp", fs)
+	client := packages.NewAlpineClient()
+	g := New(&config.BuildConfig{}, "tmp", fs, client, "3.19")
 	customFilename := "Dockerfile.template"
 
 	g.SetOutputFilename(customFilename)
@@ -520,18 +524,20 @@ func TestSortedKeys(t *testing.T) {
 }
 
 func TestGeneratePipelineStep(t *testing.T) {
-	g := &Generator{
-		config: &config.BuildConfig{
-			Vars: map[string]string{
-				"VERSION": "v1.0.0",
-			},
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{
+		Vars: map[string]string{
+			"VERSION": "v1.0.0",
 		},
 	}
+	g := New(cfg, "output", fs, client, "3.19")
 
 	tests := []struct {
 		name     string
 		step     config.PipelineStep
 		expected string
+		contains []string
 		wantErr  bool
 	}{
 		{
@@ -548,14 +554,12 @@ func TestGeneratePipelineStep(t *testing.T) {
 				Run:       "go build",
 				BuildDeps: []string{"go"},
 			},
-			expected: `RUN apk add --no-cache --virtual .build-deps \
-  {{- range $key, $value := alpine_packages "go"}}
-  {{$key}}={{$value}} \
-  {{- end}}
-  ; \
-  go build; \
-  apk del --no-network .build-deps
-`,
+			contains: []string{
+				"RUN apk add --no-cache --virtual .build-deps",
+				"go=",
+				"go build",
+				"apk del --no-network .build-deps",
+			},
 			wantErr: false,
 		},
 		{
@@ -636,17 +640,14 @@ func TestGeneratePipelineStep(t *testing.T) {
 					"gid":      1000,
 				},
 			},
-			expected: `RUN apk add --no-cache --virtual .create-user-deps \
-    {{- range $key, $value := alpine_packages "busybox"}}
-    {{$key}}={{$value}} \
-    {{- end}}
-    ;
-
-# Create application user
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
-RUN apk del --no-network .create-user-deps
-`,
+			contains: []string{
+				"RUN apk add --no-cache --virtual .create-user-deps",
+				"busybox=",
+				"# Create application user",
+				"RUN addgroup -g 1000 appuser",
+				"adduser -D -u 1000 -G appuser appuser",
+				"RUN apk del --no-network .create-user-deps",
+			},
 			wantErr: false,
 		},
 		{
@@ -673,17 +674,23 @@ RUN apk del --no-network .create-user-deps
 				t.Errorf("generatePipelineStep() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if result != tt.expected {
+			if tt.expected != "" && result != tt.expected {
 				t.Errorf("expected:\n%s\ngot:\n%s", tt.expected, result)
+			}
+			for _, substr := range tt.contains {
+				if !strings.Contains(result, substr) {
+					t.Errorf("expected result to contain %q, got:\n%s", substr, result)
+				}
 			}
 		})
 	}
 }
 
 func TestGenerateIncludeCall(t *testing.T) {
-	g := &Generator{
-		config: &config.BuildConfig{},
-	}
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{}
+	g := New(cfg, "output", fs, client, "3.19")
 
 	tests := []struct {
 		name     string
@@ -848,7 +855,8 @@ func TestGenerate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
-			g := New(tt.cfg, "output", fs)
+			client := packages.NewAlpineClient()
+			g := New(tt.cfg, "output", fs, client, "3.19")
 
 			err := g.Generate()
 			if (err != nil) != tt.wantErr {
@@ -870,14 +878,15 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestGenerateStage(t *testing.T) {
-	g := &Generator{
-		config: &config.BuildConfig{
-			Package: config.Package{
-				Name:   "test",
-				Labels: map[string]string{"version": "1.0"},
-			},
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{
+		Package: config.Package{
+			Name:   "test",
+			Labels: map[string]string{"version": "1.0"},
 		},
 	}
+	g := New(cfg, "output", fs, client, "3.19")
 
 	tests := []struct {
 		name        string
@@ -1208,7 +1217,8 @@ func TestValidateVariableReferences(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
-			g := New(tt.cfg, "output", fs)
+			client := packages.NewAlpineClient()
+			g := New(tt.cfg, "output", fs, client, "3.19")
 			err := g.validateVariableReferences()
 
 			if tt.wantError {
@@ -1277,7 +1287,8 @@ func TestGenerateWithVariableValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
-			g := New(tt.cfg, "output", fs)
+			client := packages.NewAlpineClient()
+			g := New(tt.cfg, "output", fs, client, "3.19")
 			err := g.Generate()
 
 			if tt.wantError {
@@ -1298,13 +1309,14 @@ func TestGenerateWithVariableValidation(t *testing.T) {
 }
 
 func TestGenerateStageContent(t *testing.T) {
-	g := &Generator{
-		config: &config.BuildConfig{
-			Package: config.Package{
-				Name: "test",
-			},
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{
+		Package: config.Package{
+			Name: "test",
 		},
 	}
+	g := New(cfg, "output", fs, client, "3.19")
 
 	tests := []struct {
 		name     string
@@ -1322,9 +1334,9 @@ func TestGenerateStageContent(t *testing.T) {
 			isFinal:  true,
 			contains: []string{
 				"# Install packages",
-				"alpine_packages",
-				"git",
-				"curl",
+				"apk add --no-cache",
+				"git=",
+				"curl=",
 			},
 		},
 		{
@@ -1336,8 +1348,7 @@ func TestGenerateStageContent(t *testing.T) {
 			isFinal:  true,
 			contains: []string{
 				"# Install packages into rootfs",
-				"alpine_packages",
-				"busybox",
+				"apk add --no-cache busybox=",
 			},
 		},
 		{

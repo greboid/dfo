@@ -3,7 +3,9 @@ module github.com/greboid/dfo
 go 1.25.0
 
 require (
-	github.com/spf13/cobra v1.10.2
+	github.com/containers/image/v5 v5.36.2
+	github.com/csmith/latest v1.4.0
+	github.com/spf13/cobra v1.10.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 

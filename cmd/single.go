@@ -8,7 +8,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var singleOutputDir string
+var (
+	singleOutputDir     string
+	singleAlpineVersion string
+)
 
 var singleCmd = &cobra.Command{
 	Use:   "single [directory|dfo.yaml]",
@@ -20,6 +23,7 @@ func init() {
 	rootCmd.AddCommand(singleCmd)
 
 	singleCmd.Flags().StringVarP(&singleOutputDir, "output", "o", ".", "Output directory for generated templates")
+	singleCmd.Flags().StringVar(&singleAlpineVersion, "alpine-version", "", "Alpine Linux version to resolve packages against (default: auto-detect latest)")
 }
 
 func runSingle(_ *cobra.Command, args []string) error {
@@ -35,7 +39,17 @@ func runSingle(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := processor.ProcessConfig(fs, configPath, singleOutputDir)
+	resolvedVersion := singleAlpineVersion
+	if resolvedVersion == "" {
+		latest, err := alpineClient.GetLatestStableVersion()
+		if err != nil {
+			return fmt.Errorf("failed to detect latest Alpine version: %w", err)
+		}
+		resolvedVersion = latest
+		fmt.Printf("Auto-detected Alpine version: %s\n", resolvedVersion)
+	}
+
+	result, err := processor.ProcessConfig(fs, configPath, singleOutputDir, alpineClient, resolvedVersion)
 	if err != nil {
 		return fmt.Errorf("failed to process config: %w", err)
 	}

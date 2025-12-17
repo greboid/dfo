@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greboid/dfo/pkg/packages"
 	"github.com/greboid/dfo/pkg/util"
 )
 
@@ -178,7 +179,8 @@ stages:
 			_ = fs.WriteFile("dfo.yaml", []byte(tt.configYAML), 0644)
 			_ = fs.MkdirAll("output", 0755)
 
-			result, err := ProcessConfig(fs, "dfo.yaml", "output")
+			client := packages.NewAlpineClient()
+			result, err := ProcessConfig(fs, "dfo.yaml", "output", client, "3.19")
 
 			if tt.expectError {
 				if err == nil {
@@ -210,7 +212,8 @@ func TestProcessConfigCreatesOutput(t *testing.T) {
 	_ = fs.WriteFile("dfo.yaml", []byte(validConfig), 0644)
 	_ = fs.MkdirAll("output", 0755)
 
-	result, err := ProcessConfig(fs, "dfo.yaml", "output")
+	client := packages.NewAlpineClient()
+	result, err := ProcessConfig(fs, "dfo.yaml", "output", client, "3.19")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -230,7 +233,8 @@ func TestProcessConfigInPlace(t *testing.T) {
 	_ = fs.MkdirAll("project", 0755)
 	_ = fs.WriteFile("project/dfo.yaml", []byte(validConfig), 0644)
 
-	result, err := ProcessConfigInPlace(fs, "project/dfo.yaml")
+	client := packages.NewAlpineClient()
+	result, err := ProcessConfigInPlace(fs, "project/dfo.yaml", client, "3.19")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,7 +293,8 @@ stages:
 			fs := util.NewTestFS()
 			_ = fs.WriteFile("dfo.yaml", []byte(tt.configYAML), 0644)
 
-			_, err := ProcessConfigInPlace(fs, "dfo.yaml")
+			client := packages.NewAlpineClient()
+			_, err := ProcessConfigInPlace(fs, "dfo.yaml", client, "3.19")
 
 			if tt.expectError {
 				if err == nil {

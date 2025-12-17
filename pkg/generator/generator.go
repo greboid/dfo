@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/greboid/dfo/pkg/config"
+	"github.com/greboid/dfo/pkg/packages"
 	"github.com/greboid/dfo/pkg/pipelines"
 	"github.com/greboid/dfo/pkg/util"
 )
@@ -20,14 +21,18 @@ type Generator struct {
 	outputDir      string
 	outputFilename string
 	fs             util.WritableFS
+	resolver       *packages.Resolver
 }
 
-func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS) *Generator {
+func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineClient *packages.AlpineClient, alpineVersion string) *Generator {
+	resolver := packages.NewResolver(alpineClient, alpineVersion)
+
 	return &Generator{
 		config:         cfg,
 		outputDir:      outputDir,
 		outputFilename: "Containerfile.gotpl",
 		fs:             fs,
+		resolver:       resolver,
 	}
 }
 
@@ -40,6 +45,36 @@ func buildFetchCommand(url, dest string, extract bool) string {
 
 func (g *Generator) SetOutputFilename(filename string) {
 	g.outputFilename = filename
+}
+
+func (g *Generator) resolvePackages(pkgSpecs []string) ([]packages.ResolvedPackage, error) {
+	specs, err := packages.ParsePackageSpecs(pkgSpecs)
+	if err != nil {
+		return nil, fmt.Errorf("parsing package specs: %w", err)
+	}
+
+	return g.resolver.Resolve(specs)
+}
+
+func (g *Generator) resolveAndFormatPackages(pkgSpecs []string, firstIndent bool, indent string) (string, error) {
+	resolved, err := g.resolvePackages(pkgSpecs)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	for i, pkg := range resolved {
+		if i > 0 || firstIndent {
+			b.WriteString(indent)
+		}
+		b.WriteString(fmt.Sprintf("%s=%s", pkg.Name, pkg.Version))
+		if i < len(resolved)-1 {
+			b.WriteString(" \\\n")
+		} else {
+			b.WriteString(" \\")
+		}
+	}
+	return b.String(), nil
 }
 
 func (g *Generator) Generate() error {
@@ -151,7 +186,11 @@ func (g *Generator) generateStageContent(env config.Environment, pipeline []conf
 	}
 
 	if len(env.Packages) > 0 {
-		b.WriteString(g.generatePackageInstallForEnv(env))
+		pkgInstall, err := g.generatePackageInstallForEnv(env)
+		if err != nil {
+			return "", fmt.Errorf("generating package install: %w", err)
+		}
+		b.WriteString(pkgInstall)
 		b.WriteString("\n")
 	}
 
@@ -201,7 +240,7 @@ func (g *Generator) generateStageContent(env config.Environment, pipeline []conf
 	return b.String(), nil
 }
 
-func (g *Generator) generatePackageInstallForEnv(env config.Environment) string {
+func (g *Generator) generatePackageInstallForEnv(env config.Environment) (string, error) {
 	var b strings.Builder
 	b.Grow(512)
 
@@ -209,13 +248,15 @@ func (g *Generator) generatePackageInstallForEnv(env config.Environment) string 
 	b.WriteString("RUN set -eux; \\\n")
 	b.WriteString("    apk add --no-cache \\\n")
 
-	pkgList := util.BuildPackageList(env.Packages)
-	b.WriteString(fmt.Sprintf("    {{- range $key, $value := alpine_packages %s}}\n", pkgList))
-	b.WriteString("        {{$key}}={{$value}} \\\n")
-	b.WriteString("    {{- end}}\n")
+	pkgStr, err := g.resolveAndFormatPackages(env.Packages, true, "        ")
+	if err != nil {
+		return "", fmt.Errorf("resolving packages: %w", err)
+	}
+	b.WriteString(pkgStr)
+	b.WriteString("\n")
 	b.WriteString("    ;\n")
 
-	return b.String()
+	return b.String(), nil
 }
 
 func (g *Generator) generateRootfsPackageInstallForEnv(env config.Environment) string {
@@ -223,14 +264,18 @@ func (g *Generator) generateRootfsPackageInstallForEnv(env config.Environment) s
 	b.Grow(512)
 
 	b.WriteString("# Install packages into rootfs\n")
-	b.WriteString("RUN \\\n")
 
-	pkgList := util.BuildPackageList(env.RootfsPackages)
-	b.WriteString(fmt.Sprintf("{{- range $key, $value := alpine_packages %s}}\n", pkgList))
-	b.WriteString("    apk add --no-cache {{$key}}={{$value}}; \\\n")
-	b.WriteString("    apk info -qL {{$key}} | rsync -aq --files-from=- / /rootfs/; \\\n")
-	b.WriteString("{{- end}}\n")
-	b.WriteString("    true\n")
+	resolved, err := g.resolvePackages(env.RootfsPackages)
+	if err != nil {
+		b.WriteString(fmt.Sprintf("# Error resolving packages: %v\n", err))
+		return b.String()
+	}
+
+	b.WriteString("RUN \\\n")
+	for _, pkg := range resolved {
+		b.WriteString(fmt.Sprintf("    apk add --no-cache %s=%s; \\\n", pkg.Name, pkg.Version))
+		b.WriteString(fmt.Sprintf("    apk info -qL %s | rsync -aq --files-from=- / /rootfs/; \\\n", pkg.Name))
+	}
 
 	return b.String()
 }
@@ -281,11 +326,15 @@ func (g *Generator) generatePipelineStep(step config.PipelineStep) (string, erro
 func (g *Generator) generateRunWithBuildDeps(runCmd string, buildDeps []string) string {
 	var b strings.Builder
 
-	pkgList := util.BuildPackageList(buildDeps)
+	pkgStr, err := g.resolveAndFormatPackages(buildDeps, true, "  ")
+	if err != nil {
+		b.WriteString(fmt.Sprintf("# Error resolving build deps: %v\n", err))
+		return b.String()
+	}
+
 	b.WriteString("RUN apk add --no-cache --virtual .build-deps \\\n")
-	b.WriteString(fmt.Sprintf("  {{- range $key, $value := alpine_packages %s}}\n", pkgList))
-	b.WriteString("  {{$key}}={{$value}} \\\n")
-	b.WriteString("  {{- end}}\n")
+	b.WriteString(pkgStr)
+	b.WriteString("\n")
 	b.WriteString("  ; \\\n")
 
 	lines := strings.Split(strings.TrimSpace(runCmd), "\n")
@@ -323,10 +372,8 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 		return "", fmt.Errorf("executing pipeline %q: %w", step.Uses, err)
 	}
 
-	// Merge any user-specified build-deps with pipeline-declared build-deps
 	allBuildDeps := mergeDeps(result.BuildDeps, step.BuildDeps)
 
-	// Generate the step content
 	var stepsContent strings.Builder
 	for _, pipelineStep := range result.Steps {
 		if pipelineStep.Name != "" {
@@ -364,16 +411,21 @@ func mergeDeps(a, b []string) []string {
 	return result
 }
 
-// wrapWithBuildDeps wraps dockerfile content with build dependency installation and cleanup
 func (g *Generator) wrapWithBuildDeps(content string, buildDeps []string, pipelineName string) string {
 	var b strings.Builder
 
 	virtualName := fmt.Sprintf(".%s-deps", pipelineName)
-	pkgList := util.BuildPackageList(buildDeps)
+
+	pkgStr, err := g.resolveAndFormatPackages(buildDeps, false, "    ")
+	if err != nil {
+		b.WriteString(fmt.Sprintf("# Error resolving build deps: %v\n", err))
+		return content
+	}
+
 	b.WriteString(fmt.Sprintf("RUN apk add --no-cache --virtual %s \\\n", virtualName))
-	b.WriteString(fmt.Sprintf("    {{- range $key, $value := alpine_packages %s}}\n", pkgList))
-	b.WriteString("    {{$key}}={{$value}} \\\n")
-	b.WriteString("    {{- end}}\n")
+	b.WriteString("    ")
+	b.WriteString(pkgStr)
+	b.WriteString("\n")
 	b.WriteString("    ;\n\n")
 
 	b.WriteString(content)
