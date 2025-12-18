@@ -47,6 +47,7 @@ var Signatures = map[string]pipelines.PipelineSignature{
 			"binary":       {Type: pipelines.TypeString, Required: true},
 			"workdir":      {Type: pipelines.TypeString, Required: false},
 			"ignore":       {Type: pipelines.TypeString, Required: false},
+			"go-tags":      {Type: pipelines.TypeString, Required: false},
 			"expose":       {Type: pipelines.TypeStringArray, Required: false},
 			"cmd":          {Type: pipelines.TypeStringArray, Required: false},
 			"extra-copies": {Type: pipelines.TypeObjectArray, Required: false},

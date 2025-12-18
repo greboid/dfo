@@ -140,6 +140,9 @@ func goApp(params map[string]any) (TemplateResult, error) {
 	if patches, ok := params["patches"]; ok {
 		buildParams["patches"] = patches
 	}
+	if goTags, ok := params["go-tags"].(string); ok {
+		buildParams["go-tags"] = goTags
+	}
 
 	// Parse volumes early so we can use them in build stage
 	volumes, err := ParseVolumes(params)

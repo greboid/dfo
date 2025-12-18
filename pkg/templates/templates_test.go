@@ -125,6 +125,46 @@ func TestGoApp(t *testing.T) {
 	}
 }
 
+func TestGoAppWithGoTags(t *testing.T) {
+	params := map[string]any{
+		"repo":    "https://github.com/example/app",
+		"binary":  "myapp",
+		"go-tags": "moderncsqlite,custom",
+	}
+
+	result, err := goApp(params)
+	if err != nil {
+		t.Fatalf("goApp() error = %v", err)
+	}
+
+	if len(result.Stages) != 3 {
+		t.Fatalf("expected 3 stages, got %d", len(result.Stages))
+	}
+
+	buildStage := result.Stages[0]
+	if buildStage.Name != "build" {
+		t.Errorf("expected build stage name 'build', got %q", buildStage.Name)
+	}
+
+	if len(buildStage.Pipeline) == 0 {
+		t.Fatalf("expected at least one pipeline step")
+	}
+
+	buildStep := buildStage.Pipeline[0]
+	if buildStep.Uses != "build-go-static" {
+		t.Errorf("expected pipeline to use build-go-static, got %s", buildStep.Uses)
+	}
+
+	// Verify go-tags is passed through to the build pipeline
+	goTags, ok := buildStep.With["go-tags"].(string)
+	if !ok {
+		t.Fatalf("expected go-tags in build parameters")
+	}
+	if goTags != "moderncsqlite,custom" {
+		t.Errorf("expected go-tags 'moderncsqlite,custom', got %q", goTags)
+	}
+}
+
 func TestValidateSignature(t *testing.T) {
 	tests := []struct {
 		name        string
