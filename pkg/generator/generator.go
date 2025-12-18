@@ -322,7 +322,7 @@ func (g *Generator) generateRootfsPackageInstallForEnv(env config.Environment) s
 		b.WriteString(fmt.Sprintf("    apk info -qL %s | rsync -aq --files-from=- / /rootfs/; \\\n", pkg.Name))
 	}
 
-	return b.String()
+	return b.String()[:b.Len()-3] + "\n"
 }
 
 func (g *Generator) generatePipelineStep(step config.PipelineStep) (string, error) {
