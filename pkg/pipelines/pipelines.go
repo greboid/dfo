@@ -377,11 +377,20 @@ func generateGoBuildStep(pkg, output, extraLdflags, extraTags string, cgo bool) 
 	}
 }
 
-func generateLicenseStep(pkg, output, ignore string) Step {
+func generateLicenseStep(pkg, output string, ignore []string) Step {
 	noticesPath := "/notices" + output
 	var licenseCmd string
-	if ignore != "" {
-		licenseCmd = fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=%s --ignore %s\n", pkg, noticesPath, ignore)
+	if len(ignore) > 0 {
+		ignores := strings.Builder{}
+		for _, ignoreItem := range ignore {
+			ignoreItem = strings.TrimSpace(ignoreItem)
+			if ignoreItem != "" {
+				ignores.WriteString("--ignore ")
+				ignores.WriteString(ignoreItem)
+				ignores.WriteString(" ")
+			}
+		}
+		licenseCmd = fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=%s %s\n", pkg, noticesPath, strings.TrimSpace(ignores.String()))
 	} else {
 		licenseCmd = fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=%s\n", pkg, noticesPath)
 	}
@@ -426,10 +435,7 @@ func CloneAndBuildGo(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
-	ignore, err := util.ValidateOptionalStringParamStrict(params, "ignore", "")
-	if err != nil {
-		return PipelineResult{}, err
-	}
+	ignore := util.ExtractStringSlice(params, "ignore")
 
 	workdir, err := extractRepoWorkdir(repo, params)
 	if err != nil {
@@ -485,10 +491,8 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
-	ignore, err := util.ValidateOptionalStringParamStrict(params, "ignore", "")
-	if err != nil {
-		return PipelineResult{}, err
-	}
+	ignore := util.ExtractStringSlice(params, "ignore")
+
 	tag, err := util.ValidateStringParam(params, "tag")
 	if err != nil {
 		return PipelineResult{}, fmt.Errorf("tag parameter is required (use tag: %%{versions.REPO_URL} to resolve version): %w", err)
@@ -548,10 +552,7 @@ func BuildGoOnly(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
-	ignore, err := util.ValidateOptionalStringParamStrict(params, "ignore", "")
-	if err != nil {
-		return PipelineResult{}, err
-	}
+	ignore := util.ExtractStringSlice(params, "ignore")
 
 	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
 	if err != nil {
