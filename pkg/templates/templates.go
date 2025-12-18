@@ -131,6 +131,9 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		"repo":    repo,
 		"package": pkg,
 	}
+	if tag, ok := params["tag"].(string); ok {
+		buildParams["tag"] = tag
+	}
 	if ignore, ok := params["ignore"].(string); ok {
 		buildParams["ignore"] = ignore
 	}
@@ -198,7 +201,6 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		})
 	}
 
-	// Copy extra files from build stage
 	for _, ec := range extraCopies {
 		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
 			Copy: &CopyStepResult{
@@ -270,7 +272,6 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 	repo, _ := params["repo"].(string)
 	binary, _ := params["binary"].(string)
 
-	// Build packages list (git is always needed)
 	packages := []string{"git"}
 	if pkgs, ok := params["packages"].([]any); ok {
 		for _, pkg := range pkgs {
@@ -280,7 +281,6 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		}
 	}
 
-	// Build params for clone-and-build-rust
 	buildParams := map[string]any{
 		"repo": repo,
 	}
@@ -402,9 +402,9 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 	}, nil
 }
 
-// BinarySpec represents a binary specification for multi-go-app
 type BinarySpec struct {
 	Repo       string
+	Tag        string
 	Package    string
 	Binary     string
 	GoTags     string
@@ -482,6 +482,10 @@ func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
 			spec.Cgo = cgo
 		}
 
+		if tag, ok := binaryMap["tag"].(string); ok {
+			spec.Tag = tag
+		}
+
 		binaries = append(binaries, spec)
 	}
 
@@ -489,51 +493,47 @@ func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
 }
 
 func multiGoApp(params map[string]any) (TemplateResult, error) {
-	// Parse binaries
 	binaries, err := ParseBinaries(params)
 	if err != nil {
 		return TemplateResult{}, fmt.Errorf("parsing binaries: %w", err)
 	}
 
-	// Parse volumes
 	volumes, err := ParseVolumes(params)
 	if err != nil {
 		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
 	}
 
-	// Parse extra-copies
 	extraCopies, err := ParseExtraCopies(params)
 	if err != nil {
 		return TemplateResult{}, fmt.Errorf("parsing extra-copies: %w", err)
 	}
 
-	// Track which repos have been cloned (by URL -> workdir)
 	clonedRepos := make(map[string]string)
 
-	buildPipeline := []PipelineStepResult{}
+	var buildPipeline []PipelineStepResult
 
-	// For each binary, clone repo if not already cloned, then build
 	for _, bin := range binaries {
 		workdir, alreadyCloned := clonedRepos[bin.Repo]
 		if !alreadyCloned {
-			// Determine workdir for this repo
 			workdir = "/src"
 			if ownerRepo := pipelines.ExtractGitHubOwnerRepo(bin.Repo); ownerRepo != "" {
 				workdir = "/src/" + ownerRepo
 			}
 			clonedRepos[bin.Repo] = workdir
 
-			// Add clone step
+			cloneWith := map[string]any{
+				"repo":    bin.Repo,
+				"workdir": workdir,
+			}
+			if bin.Tag != "" {
+				cloneWith["tag"] = bin.Tag
+			}
 			buildPipeline = append(buildPipeline, PipelineStepResult{
 				Uses: "clone",
-				With: map[string]any{
-					"repo":    bin.Repo,
-					"workdir": workdir,
-				},
+				With: cloneWith,
 			})
 		}
 
-		// Build params for this binary
 		buildParams := map[string]any{
 			"workdir": workdir,
 			"package": bin.Package,
@@ -549,14 +549,12 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 			buildParams["cgo"] = bin.Cgo
 		}
 
-		// Add build step (using build-go-only pipeline which doesn't clone)
 		buildPipeline = append(buildPipeline, PipelineStepResult{
 			Uses: "build-go-only",
 			With: buildParams,
 		})
 	}
 
-	// Create volumes in build stage
 	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
 		buildPipeline = append(buildPipeline, *volumeStep)
 	}
@@ -569,10 +567,8 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		Pipeline: buildPipeline,
 	}
 
-	// Build rootfs pipeline
-	rootfsPipeline := []PipelineStepResult{}
+	var rootfsPipeline []PipelineStepResult
 
-	// Copy each binary
 	for _, bin := range binaries {
 		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
 			Copy: &CopyStepResult{
@@ -583,7 +579,6 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		})
 	}
 
-	// Copy license notices for each binary
 	for _, bin := range binaries {
 		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
 			Copy: &CopyStepResult{
@@ -594,7 +589,6 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		})
 	}
 
-	// Copy volumes from build stage
 	for _, vol := range volumes {
 		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
 			Copy: &CopyStepResult{
@@ -605,7 +599,6 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		})
 	}
 
-	// Copy extra files from build stage
 	for _, ec := range extraCopies {
 		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
 			Copy: &CopyStepResult{
@@ -624,7 +617,6 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		Pipeline: rootfsPipeline,
 	}
 
-	// Determine entrypoint binary
 	entrypointBinary := binaries[0].Binary
 	for _, bin := range binaries {
 		if bin.Entrypoint {
@@ -682,22 +674,17 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 	}, nil
 }
 
-// VolumeSpec represents a volume directory specification
 type VolumeSpec struct {
 	Path        string
 	Owner       string
 	Permissions string
 }
 
-// ExtraCopySpec represents an extra file/directory to copy
 type ExtraCopySpec struct {
 	From string
 	To   string
 }
 
-// ParseVolumes extracts volume specifications from template params.
-// Each volume can specify path (required), owner (optional), and permissions (optional).
-// Defaults are applied from postgres-15 conventions: owner "65532:65532", permissions "777".
 func ParseVolumes(params map[string]any) ([]VolumeSpec, error) {
 	volumesParam, ok := params["volumes"]
 	if !ok {
@@ -741,8 +728,6 @@ func ParseVolumes(params map[string]any) ([]VolumeSpec, error) {
 	return volumes, nil
 }
 
-// CreateVolumesStep generates a create-directories pipeline step from volume specs.
-// Returns nil if no volumes are specified.
 func CreateVolumesStep(volumes []VolumeSpec) *PipelineStepResult {
 	if len(volumes) == 0 {
 		return nil
@@ -765,8 +750,6 @@ func CreateVolumesStep(volumes []VolumeSpec) *PipelineStepResult {
 	}
 }
 
-// ParseExtraCopies extracts extra-copy specifications from template params.
-// Each extra-copy must specify from (required) and to (required).
 func ParseExtraCopies(params map[string]any) ([]ExtraCopySpec, error) {
 	copiesParam, ok := params["extra-copies"]
 	if !ok {

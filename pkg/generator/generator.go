@@ -1,7 +1,9 @@
 package generator
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"path"
 	"strings"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/greboid/dfo/pkg/packages"
 	"github.com/greboid/dfo/pkg/pipelines"
 	"github.com/greboid/dfo/pkg/util"
+	"github.com/greboid/dfo/pkg/versions"
 )
 
 const (
@@ -17,22 +20,27 @@ const (
 )
 
 type Generator struct {
-	config         *config.BuildConfig
-	outputDir      string
-	outputFilename string
-	fs             util.WritableFS
-	resolver       *packages.Resolver
+	config           *config.BuildConfig
+	outputDir        string
+	outputFilename   string
+	fs               util.WritableFS
+	resolver         *packages.Resolver
+	versionResolver  *versions.Resolver
+	resolvedVersions map[string]string
 }
 
-func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineClient *packages.AlpineClient, alpineVersion string) *Generator {
+func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass string) *Generator {
 	resolver := packages.NewResolver(alpineClient, alpineVersion)
+	versionResolver := versions.New(context.Background(), gitUser, gitPass)
 
 	return &Generator{
-		config:         cfg,
-		outputDir:      outputDir,
-		outputFilename: "Containerfile.gotpl",
-		fs:             fs,
-		resolver:       resolver,
+		config:           cfg,
+		outputDir:        outputDir,
+		outputFilename:   "Containerfile.gotpl",
+		fs:               fs,
+		resolver:         resolver,
+		versionResolver:  versionResolver,
+		resolvedVersions: make(map[string]string),
 	}
 }
 
@@ -45,6 +53,37 @@ func buildFetchCommand(url, dest string, extract bool) string {
 
 func (g *Generator) SetOutputFilename(filename string) {
 	g.outputFilename = filename
+}
+
+func (g *Generator) resolveVersions() error {
+	if g.config.Versions == nil {
+		return nil
+	}
+
+	for key, value := range g.config.Versions {
+		resolved, err := g.versionResolver.Resolve(key, value)
+		if err != nil {
+			return fmt.Errorf("resolving version %q: %w", key, err)
+		}
+		g.resolvedVersions[key] = resolved
+		slog.Debug("resolved version", "key", key, "value", value, "resolved", resolved)
+	}
+
+	return nil
+}
+
+func (g *Generator) buildVarsMap() map[string]string {
+	vars := make(map[string]string)
+
+	for k, v := range g.config.Vars {
+		vars[k] = v
+	}
+
+	for k, v := range g.resolvedVersions {
+		vars["versions."+k] = v
+	}
+
+	return vars
 }
 
 func (g *Generator) resolvePackages(pkgSpecs []string) ([]packages.ResolvedPackage, error) {
@@ -78,6 +117,10 @@ func (g *Generator) resolveAndFormatPackages(pkgSpecs []string, firstIndent bool
 }
 
 func (g *Generator) Generate() error {
+	if err := g.resolveVersions(); err != nil {
+		return fmt.Errorf("resolving versions: %w", err)
+	}
+
 	if err := g.validateVariableReferences(); err != nil {
 		return fmt.Errorf("variable validation: %w", err)
 	}
@@ -94,6 +137,8 @@ func (g *Generator) Generate() error {
 }
 
 func (g *Generator) validateVariableReferences() error {
+	vars := g.buildVarsMap()
+
 	for _, stage := range g.config.Stages {
 		for i, step := range stage.Pipeline {
 			stepContext := fmt.Sprintf("stage %q step %d", stage.Name, i+1)
@@ -102,13 +147,13 @@ func (g *Generator) validateVariableReferences() error {
 			}
 
 			if step.Run != "" {
-				if err := util.ValidateVariableReferences(step.Run, g.config.Vars, stepContext+" (run)"); err != nil {
+				if err := util.ValidateVariableReferences(step.Run, vars, stepContext+" (run)"); err != nil {
 					return err
 				}
 			}
 
 			if step.Fetch != nil && step.Fetch.URL != "" {
-				if err := util.ValidateVariableReferences(step.Fetch.URL, g.config.Vars, stepContext+" (fetch.url)"); err != nil {
+				if err := util.ValidateVariableReferences(step.Fetch.URL, vars, stepContext+" (fetch.url)"); err != nil {
 					return err
 				}
 			}
@@ -293,7 +338,8 @@ func (g *Generator) generatePipelineStep(step config.PipelineStep) (string, erro
 	}
 
 	if step.Run != "" {
-		run := util.ExpandVars(step.Run, g.config.Vars)
+		vars := g.buildVarsMap()
+		run := util.ExpandVars(step.Run, vars)
 
 		if len(step.BuildDeps) > 0 {
 			b.WriteString(g.generateRunWithBuildDeps(run, step.BuildDeps))
@@ -353,7 +399,8 @@ func (g *Generator) generateFetchStep(fetch *config.FetchStep) string {
 		dest = "/tmp/download"
 	}
 
-	url := util.ExpandVars(fetch.URL, g.config.Vars)
+	vars := g.buildVarsMap()
+	url := util.ExpandVars(fetch.URL, vars)
 	return buildFetchCommand(url, dest, fetch.Extract)
 }
 
@@ -365,6 +412,18 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 
 	if err := pipelines.ValidateParams(step.Uses, step.With); err != nil {
 		return "", err
+	}
+
+	vars := g.buildVarsMap()
+
+	for _, key := range []string{"tag", "commit"} {
+		if value, ok := step.With[key]; ok {
+			expanded, err := util.ExpandVarsStrict(value.(string), vars, "")
+			if err != nil {
+				return "", fmt.Errorf("variable not found in pipeline %q (step %q)", step.Uses, step.Name)
+			}
+			step.With[key] = expanded
+		}
 	}
 
 	result, err := pipeline(step.With)
@@ -390,7 +449,6 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 	return stepsContent.String(), nil
 }
 
-// mergeDeps combines two slices of dependencies, removing duplicates
 func mergeDeps(a, b []string) []string {
 	seen := make(map[string]bool)
 	var result []string

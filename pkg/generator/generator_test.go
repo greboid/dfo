@@ -253,7 +253,7 @@ func TestGeneratePackageInstallForEnv(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19")
+	g := New(cfg, "output", fs, client, "3.19", "", "")
 
 	tests := []struct {
 		name     string
@@ -307,7 +307,7 @@ func TestGenerateRootfsPackageInstallForEnv(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19")
+	g := New(cfg, "output", fs, client, "3.19", "", "")
 
 	tests := []struct {
 		name     string
@@ -357,7 +357,7 @@ func TestGenerateRunWithBuildDeps(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19")
+	g := New(cfg, "output", fs, client, "3.19", "", "")
 
 	tests := []struct {
 		name      string
@@ -443,7 +443,7 @@ func TestNew(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 
-	g := New(cfg, outputDir, fs, client, "3.19")
+	g := New(cfg, outputDir, fs, client, "3.19", "", "")
 
 	if g.config != cfg {
 		t.Error("config not set correctly")
@@ -459,7 +459,7 @@ func TestNew(t *testing.T) {
 func TestSetOutputFilename(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
-	g := New(&config.BuildConfig{}, "tmp", fs, client, "3.19")
+	g := New(&config.BuildConfig{}, "tmp", fs, client, "3.19", "", "")
 	customFilename := "Dockerfile.template"
 
 	g.SetOutputFilename(customFilename)
@@ -531,7 +531,7 @@ func TestGeneratePipelineStep(t *testing.T) {
 			"VERSION": "v1.0.0",
 		},
 	}
-	g := New(cfg, "output", fs, client, "3.19")
+	g := New(cfg, "output", fs, client, "3.19", "", "")
 
 	tests := []struct {
 		name     string
@@ -690,7 +690,7 @@ func TestGenerateIncludeCall(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19")
+	g := New(cfg, "output", fs, client, "3.19", "", "")
 
 	tests := []struct {
 		name     string
@@ -856,7 +856,7 @@ func TestGenerate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
 			client := packages.NewAlpineClient()
-			g := New(tt.cfg, "output", fs, client, "3.19")
+			g := New(tt.cfg, "output", fs, client, "3.19", "", "")
 
 			err := g.Generate()
 			if (err != nil) != tt.wantErr {
@@ -886,7 +886,7 @@ func TestGenerateStage(t *testing.T) {
 			Labels: map[string]string{"version": "1.0"},
 		},
 	}
-	g := New(cfg, "output", fs, client, "3.19")
+	g := New(cfg, "output", fs, client, "3.19", "", "")
 
 	tests := []struct {
 		name        string
@@ -1218,7 +1218,7 @@ func TestValidateVariableReferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
 			client := packages.NewAlpineClient()
-			g := New(tt.cfg, "output", fs, client, "3.19")
+			g := New(tt.cfg, "output", fs, client, "3.19", "", "")
 			err := g.validateVariableReferences()
 
 			if tt.wantError {
@@ -1288,7 +1288,7 @@ func TestGenerateWithVariableValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
 			client := packages.NewAlpineClient()
-			g := New(tt.cfg, "output", fs, client, "3.19")
+			g := New(tt.cfg, "output", fs, client, "3.19", "", "")
 			err := g.Generate()
 
 			if tt.wantError {
@@ -1316,7 +1316,7 @@ func TestGenerateStageContent(t *testing.T) {
 			Name: "test",
 		},
 	}
-	g := New(cfg, "output", fs, client, "3.19")
+	g := New(cfg, "output", fs, client, "3.19", "", "")
 
 	tests := []struct {
 		name     string

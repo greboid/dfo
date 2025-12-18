@@ -6,8 +6,7 @@ import (
 	"strings"
 )
 
-// varRefPattern %{VAR_NAME}
-var varRefPattern = regexp.MustCompile(`%\{([A-Za-z_][A-Za-z0-9_]*)}`)
+var varRefPattern = regexp.MustCompile(`%\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_:/\-.]+)?)}`)
 
 func ExtractVariableReferences(s string) []string {
 	matches := varRefPattern.FindAllStringSubmatch(s, -1)

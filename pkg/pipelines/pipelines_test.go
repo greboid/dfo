@@ -438,7 +438,9 @@ func TestCloneAndBuildGo(t *testing.T) {
 			name: "minimal parameters",
 			params: map[string]any{
 				"repo": "https://github.com/example/repo",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -460,9 +462,11 @@ func TestCloneAndBuildGo(t *testing.T) {
 			name: "with custom output and package",
 			params: map[string]any{
 				"repo":    "https://github.com/example/repo",
+				"tag":     "v1.0.0",
 				"package": "./cmd/app",
 				"output":  "/app",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -489,31 +493,35 @@ func TestCloneAndBuildGo(t *testing.T) {
 			},
 		},
 		{
-			name: "without tag uses github_tag function",
+			name: "with explicit tag",
 			params: map[string]any{
 				"repo": "https://github.com/csmith/dotege",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
-				if !strings.Contains(steps[0].Content, `{{github_tag "csmith/dotege"}}`) {
-					t.Errorf("expected github_tag function, got: %s", steps[0].Content)
+				if !strings.Contains(steps[0].Content, "--branch v1.0.0") {
+					t.Errorf("expected --branch v1.0.0, got: %s", steps[0].Content)
 				}
 			},
 		},
 		{
-			name: "non-GitHub repo without tag",
+			name: "non-GitHub repo with tag",
 			params: map[string]any{
 				"repo": "https://gitlab.com/example/repo",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
-				if strings.Contains(steps[0].Content, "github_tag") {
-					t.Errorf("expected no github_tag for non-GitHub repo, got: %s", steps[0].Content)
+				if !strings.Contains(steps[0].Content, "--branch v1.0.0") {
+					t.Errorf("expected --branch v1.0.0, got: %s", steps[0].Content)
 				}
 				if !strings.Contains(steps[0].Content, "git clone --depth=1") {
-					t.Errorf("expected simple clone for non-GitHub repo, got: %s", steps[0].Content)
+					t.Errorf("expected depth 1 clone, got: %s", steps[0].Content)
 				}
 			},
 		},
@@ -549,7 +557,9 @@ func TestBuildGoStatic(t *testing.T) {
 			name: "minimal parameters",
 			params: map[string]any{
 				"repo": "https://github.com/example/repo",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -565,8 +575,10 @@ func TestBuildGoStatic(t *testing.T) {
 			name: "with ignore parameter",
 			params: map[string]any{
 				"repo":   "https://github.com/example/repo",
+				"tag":    "v1.0.0",
 				"ignore": "modernc.org/mathutil",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -579,8 +591,10 @@ func TestBuildGoStatic(t *testing.T) {
 			name: "with custom workdir",
 			params: map[string]any{
 				"repo":    "https://github.com/example/repo",
+				"tag":     "v1.0.0",
 				"workdir": "/custom",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -621,7 +635,9 @@ func TestCloneAndBuildRust(t *testing.T) {
 			name: "minimal parameters",
 			params: map[string]any{
 				"repo": "https://github.com/example/rustapp",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -646,8 +662,10 @@ func TestCloneAndBuildRust(t *testing.T) {
 			name: "with features",
 			params: map[string]any{
 				"repo":     "https://github.com/example/rustapp",
+				"tag":      "v1.0.0",
 				"features": "sqlite,enable_mimalloc",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -660,6 +678,7 @@ func TestCloneAndBuildRust(t *testing.T) {
 			name: "with patches as array",
 			params: map[string]any{
 				"repo": "https://github.com/example/rustapp",
+				"tag":  "v1.0.0",
 				"patches": []any{
 					"fix1.diff",
 					"fix2.diff",
@@ -686,8 +705,10 @@ func TestCloneAndBuildRust(t *testing.T) {
 			name: "with single patch as string",
 			params: map[string]any{
 				"repo":    "https://github.com/example/rustapp",
+				"tag":     "v1.0.0",
 				"patches": "single.diff",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -703,9 +724,11 @@ func TestCloneAndBuildRust(t *testing.T) {
 			name: "with custom workdir and output",
 			params: map[string]any{
 				"repo":    "https://github.com/example/rustapp",
+				"tag":     "v1.0.0",
 				"workdir": "/build",
 				"output":  "/app/binary",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -732,15 +755,17 @@ func TestCloneAndBuildRust(t *testing.T) {
 			},
 		},
 		{
-			name: "without tag uses github_tag function",
+			name: "with explicit tag",
 			params: map[string]any{
 				"repo": "https://github.com/dani-garcia/vaultwarden",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
-				if !strings.Contains(steps[0].Content, `{{github_tag "dani-garcia/vaultwarden"}}`) {
-					t.Errorf("expected github_tag function, got: %s", steps[0].Content)
+				if !strings.Contains(steps[0].Content, "--branch v1.0.0") {
+					t.Errorf("expected --branch v1.0.0, got: %s", steps[0].Content)
 				}
 			},
 		},
@@ -776,7 +801,9 @@ func TestCloneAndBuildMake(t *testing.T) {
 			name: "minimal parameters with default strip",
 			params: map[string]any{
 				"repo": "https://github.com/example/makerepo",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -795,6 +822,7 @@ func TestCloneAndBuildMake(t *testing.T) {
 			name: "with make-steps",
 			params: map[string]any{
 				"repo": "https://github.com/example/makerepo",
+				"tag":  "v1.0.0",
 				"make-steps": []any{
 					"make",
 					"make install",
@@ -818,8 +846,10 @@ func TestCloneAndBuildMake(t *testing.T) {
 			name: "with single make-step as string",
 			params: map[string]any{
 				"repo":       "https://github.com/example/makerepo",
+				"tag":        "v1.0.0",
 				"make-steps": "make",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -835,8 +865,10 @@ func TestCloneAndBuildMake(t *testing.T) {
 			name: "with strip disabled",
 			params: map[string]any{
 				"repo":  "https://github.com/example/makerepo",
+				"tag":   "v1.0.0",
 				"strip": false,
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -852,8 +884,10 @@ func TestCloneAndBuildMake(t *testing.T) {
 			name: "with strip enabled explicitly",
 			params: map[string]any{
 				"repo":  "https://github.com/example/makerepo",
+				"tag":   "v1.0.0",
 				"strip": true,
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -873,8 +907,10 @@ func TestCloneAndBuildMake(t *testing.T) {
 			name: "with custom workdir",
 			params: map[string]any{
 				"repo":    "https://github.com/example/makerepo",
+				"tag":     "v1.0.0",
 				"workdir": "/build",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -929,7 +965,9 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "minimal parameters with defaults",
 			params: map[string]any{
 				"repo": "https://github.com/example/autoconfrepo",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -951,6 +989,7 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "with configure options",
 			params: map[string]any{
 				"repo": "https://github.com/example/autoconfrepo",
+				"tag":  "v1.0.0",
 				"configure-options": []any{
 					"--prefix=/usr",
 					"--enable-static",
@@ -973,8 +1012,10 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "with single configure option as string",
 			params: map[string]any{
 				"repo":              "https://github.com/example/autoconfrepo",
+				"tag":               "v1.0.0",
 				"configure-options": "--prefix=/usr",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -987,6 +1028,7 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "with make steps",
 			params: map[string]any{
 				"repo": "https://github.com/example/autoconfrepo",
+				"tag":  "v1.0.0",
 				"make-steps": []any{
 					"make -j$(nproc)",
 					"make install",
@@ -1011,8 +1053,10 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "with single make step as string",
 			params: map[string]any{
 				"repo":       "https://github.com/example/autoconfrepo",
+				"tag":        "v1.0.0",
 				"make-steps": "make install",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1028,8 +1072,10 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "with strip disabled",
 			params: map[string]any{
 				"repo":  "https://github.com/example/autoconfrepo",
+				"tag":   "v1.0.0",
 				"strip": false,
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1047,8 +1093,10 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "with strip enabled explicitly",
 			params: map[string]any{
 				"repo":  "https://github.com/example/autoconfrepo",
+				"tag":   "v1.0.0",
 				"strip": true,
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1068,8 +1116,10 @@ func TestCloneAndBuildAutoconf(t *testing.T) {
 			name: "with custom workdir",
 			params: map[string]any{
 				"repo":    "https://github.com/example/autoconfrepo",
+				"tag":     "v1.0.0",
 				"workdir": "/build/custom",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1160,10 +1210,12 @@ func TestClone(t *testing.T) {
 		check   func(*testing.T, PipelineResult)
 	}{
 		{
-			name: "basic clone without tag or commit",
+			name: "basic clone with tag",
 			params: map[string]any{
 				"repo": "https://github.com/example/repo",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1173,8 +1225,8 @@ func TestClone(t *testing.T) {
 				if !strings.Contains(steps[0].Content, "git clone") {
 					t.Errorf("expected git clone command, got: %s", steps[0].Content)
 				}
-				if !strings.Contains(steps[0].Content, `{{github_tag "example/repo"}}`) {
-					t.Errorf("expected github_tag function for GitHub repo, got: %s", steps[0].Content)
+				if !strings.Contains(steps[0].Content, "--branch v1.0.0") {
+					t.Errorf("expected --branch v1.0.0, got: %s", steps[0].Content)
 				}
 			},
 		},
@@ -1198,6 +1250,7 @@ func TestClone(t *testing.T) {
 				"repo":   "https://github.com/example/repo",
 				"commit": "abc123def456",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1210,8 +1263,10 @@ func TestClone(t *testing.T) {
 			name: "clone with custom workdir",
 			params: map[string]any{
 				"repo":    "https://github.com/example/repo",
+				"tag":     "v1.0.0",
 				"workdir": "/custom/path",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1657,8 +1712,10 @@ func TestTypeErrorHandling(t *testing.T) {
 			pipeline: "clone",
 			params: map[string]any{
 				"repo":    "https://github.com/example/repo",
+				"tag":     "v1.0.0",
 				"workdir": true,
 			},
+
 			errMsg: "parameter \"workdir\" must be a string, got bool",
 		},
 		{
@@ -1666,8 +1723,10 @@ func TestTypeErrorHandling(t *testing.T) {
 			pipeline: "clone-and-build-make",
 			params: map[string]any{
 				"repo":  "https://github.com/example/repo",
+				"tag":   "v1.0.0",
 				"strip": "yes",
 			},
+
 			errMsg: "parameter \"strip\" must be a boolean, got string",
 		},
 		{
@@ -1675,8 +1734,10 @@ func TestTypeErrorHandling(t *testing.T) {
 			pipeline: "clone-and-build-autoconf",
 			params: map[string]any{
 				"repo":  "https://github.com/example/repo",
+				"tag":   "v1.0.0",
 				"strip": 1,
 			},
+
 			errMsg: "parameter \"strip\" must be a boolean, got int",
 		},
 		{
@@ -1905,6 +1966,7 @@ func TestCloneAndBuildGoWithPatches(t *testing.T) {
 			name: "with patches as array",
 			params: map[string]any{
 				"repo": "https://github.com/example/gorepo",
+				"tag":  "v1.0.0",
 				"patches": []any{
 					"fix1.patch",
 					"fix2.patch",
@@ -1942,8 +2004,10 @@ func TestCloneAndBuildGoWithPatches(t *testing.T) {
 			name: "with single patch as string",
 			params: map[string]any{
 				"repo":    "https://github.com/example/gorepo",
+				"tag":     "v1.0.0",
 				"patches": "single.patch",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
@@ -1959,7 +2023,9 @@ func TestCloneAndBuildGoWithPatches(t *testing.T) {
 			name: "without patches - no patch in deps",
 			params: map[string]any{
 				"repo": "https://github.com/example/gorepo",
+				"tag":  "v1.0.0",
 			},
+
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps

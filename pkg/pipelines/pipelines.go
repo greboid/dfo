@@ -12,11 +12,10 @@ type Step struct {
 	Content string
 }
 
-// PipelineResult contains the generated steps and their dependencies
 type PipelineResult struct {
 	Steps     []Step
-	BuildDeps []string // Temporary packages needed during build, removed after
-	Packages  []string // Packages that need to persist in the image
+	BuildDeps []string
+	Packages  []string
 }
 
 type Pipeline func(params map[string]any) (PipelineResult, error)
@@ -311,15 +310,8 @@ func generateCloneStep(repo, tag, commit, workdir string) Step {
 	var cloneCmd string
 	if commit != "" {
 		cloneCmd = fmt.Sprintf("RUN git clone %q %s && \\\n    cd %s && \\\n    git checkout %s\n", repo, workdir, workdir, commit)
-	} else if tag != "" {
-		cloneCmd = fmt.Sprintf("RUN git clone --depth=1 --branch %s %q %s\n", tag, repo, workdir)
 	} else {
-		ownerRepo := ExtractGitHubOwnerRepo(repo)
-		if ownerRepo != "" {
-			cloneCmd = fmt.Sprintf("RUN git clone --depth=1 --branch {{github_tag %q}} %q %s\n", ownerRepo, repo, workdir)
-		} else {
-			cloneCmd = fmt.Sprintf("RUN git clone --depth=1 %q %s\n", repo, workdir)
-		}
+		cloneCmd = fmt.Sprintf("RUN git clone --depth=1 --branch %s %q %s\n", tag, repo, workdir)
 	}
 
 	return Step{
@@ -354,6 +346,10 @@ func Clone(params map[string]any) (PipelineResult, error) {
 
 	if tag != "" && commit != "" {
 		return PipelineResult{}, fmt.Errorf("cannot specify both tag and commit")
+	}
+
+	if tag == "" && commit == "" {
+		return PipelineResult{}, fmt.Errorf("must specify either tag or commit parameter (use tag: %%{versions.REPO_URL} to resolve version)")
 	}
 
 	return PipelineResult{
@@ -415,9 +411,9 @@ func CloneAndBuildGo(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
-	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
+	tag, err := util.ValidateStringParam(params, "tag")
 	if err != nil {
-		return PipelineResult{}, err
+		return PipelineResult{}, fmt.Errorf("tag parameter is required (use tag: %%{versions.REPO_URL} to resolve version): %w", err)
 	}
 
 	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
@@ -493,9 +489,9 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 	if err != nil {
 		return PipelineResult{}, err
 	}
-	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
+	tag, err := util.ValidateStringParam(params, "tag")
 	if err != nil {
-		return PipelineResult{}, err
+		return PipelineResult{}, fmt.Errorf("tag parameter is required (use tag: %%{versions.REPO_URL} to resolve version): %w", err)
 	}
 
 	goTags, err := util.ValidateOptionalStringParamStrict(params, "go-tags", "")
@@ -532,7 +528,6 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 	}, nil
 }
 
-// BuildGoOnly builds a Go binary without cloning (assumes repo is already cloned)
 func BuildGoOnly(params map[string]any) (PipelineResult, error) {
 	if err := ValidateParams("build-go-only", params); err != nil {
 		return PipelineResult{}, err
@@ -604,9 +599,9 @@ func CloneAndBuildRust(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
-	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
+	tag, err := util.ValidateStringParam(params, "tag")
 	if err != nil {
-		return PipelineResult{}, err
+		return PipelineResult{}, fmt.Errorf("tag parameter is required (use tag: %%{versions.REPO_URL} to resolve version): %w", err)
 	}
 
 	patches := util.ExtractStringSlice(params, "patches")
@@ -659,9 +654,9 @@ func CloneAndBuildMake(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
-	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
+	tag, err := util.ValidateStringParam(params, "tag")
 	if err != nil {
-		return PipelineResult{}, err
+		return PipelineResult{}, fmt.Errorf("tag parameter is required (use tag: %%{versions.REPO_URL} to resolve version): %w", err)
 	}
 
 	makeSteps := util.ExtractStringSlice(params, "make-steps")
@@ -706,9 +701,9 @@ func CloneAndBuildAutoconf(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
-	tag, err := util.ValidateOptionalStringParamStrict(params, "tag", "")
+	tag, err := util.ValidateStringParam(params, "tag")
 	if err != nil {
-		return PipelineResult{}, err
+		return PipelineResult{}, fmt.Errorf("tag parameter is required (use tag: %%{versions.REPO_URL} to resolve version): %w", err)
 	}
 
 	configureOptions := util.ExtractStringSlice(params, "configure-options")

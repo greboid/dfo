@@ -5,6 +5,7 @@ type BuildConfig struct {
 	Stages      []Stage           `yaml:"stages,omitempty"`
 	Environment Environment       `yaml:"environment"`
 	Vars        map[string]string `yaml:"vars,omitempty"`
+	Versions    map[string]string `yaml:"versions,omitempty"`
 }
 
 type Stage struct {

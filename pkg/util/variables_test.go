@@ -278,6 +278,14 @@ func TestExpandVarsStrict(t *testing.T) {
 			expected:  "plain text",
 			wantError: false,
 		},
+		{
+			name:      "Test version",
+			input:     "RUN git clone --depth=1 --branch %{versions.postgres} \"https://github.com/postgres/postgres\" /src/postgres",
+			vars:      map[string]string{"versions.postgres": "REL_15_STABLE"},
+			context:   "test",
+			expected:  "RUN git clone --depth=1 --branch REL_15_STABLE \"https://github.com/postgres/postgres\" /src/postgres",
+			wantError: false,
+		},
 	}
 
 	for _, tt := range tests {

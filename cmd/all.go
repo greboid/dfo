@@ -13,6 +13,8 @@ import (
 var (
 	allDirectory     string
 	allAlpineVersion string
+	allGitUser       string
+	allGitPass       string
 )
 
 var allCmd = &cobra.Command{
@@ -26,6 +28,8 @@ func init() {
 
 	allCmd.Flags().StringVarP(&allDirectory, "directory", "d", ".", "Directory to search for dfo.yaml files")
 	allCmd.Flags().StringVar(&allAlpineVersion, "alpine-version", "", "Alpine Linux version to resolve packages against (default: auto-detect latest)")
+	allCmd.Flags().StringVar(&allGitUser, "git-user", "", "Git username for private repository access")
+	allCmd.Flags().StringVar(&allGitPass, "git-pass", "", "Git password/token for private repository access")
 }
 
 func runAll(_ *cobra.Command, _ []string) error {
@@ -44,7 +48,7 @@ func runAll(_ *cobra.Command, _ []string) error {
 	}
 
 	fileProcessor := func(configPath string) error {
-		result, err := processor.ProcessConfigInPlace(fs, configPath, alpineClient, resolvedVersion)
+		result, err := processor.ProcessConfigInPlace(fs, configPath, alpineClient, resolvedVersion, allGitUser, allGitPass)
 		if err != nil {
 			return err
 		}
