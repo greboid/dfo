@@ -290,7 +290,6 @@ func checkType(paramName string, value any, expectedType ParamType) error {
 				}
 			}
 		case []map[string]any:
-			// Already the correct type, no validation needed
 		default:
 			return fmt.Errorf("parameter %q must be an array of objects, got %T", paramName, value)
 		}

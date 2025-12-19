@@ -6,7 +6,6 @@ import (
 	"github.com/greboid/dfo/pkg/pipelines"
 )
 
-// Volume defaults matching postgres-15 conventions
 const (
 	DefaultVolumeOwner       = "65532:65532"
 	DefaultVolumePermissions = "777"
@@ -86,7 +85,6 @@ func rustBuilder(params map[string]any) (TemplateResult, error) {
 		}
 	}
 
-	// Create a copy of params without the packages key for the pipeline
 	pipelineParams := make(map[string]any)
 	for k, v := range params {
 		if k != "packages" {
@@ -144,13 +142,11 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		buildParams["go-tags"] = goTags
 	}
 
-	// Parse volumes early so we can use them in build stage
 	volumes, err := ParseVolumes(params)
 	if err != nil {
 		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
 	}
 
-	// Parse extra-copies
 	extraCopies, err := ParseExtraCopies(params)
 	if err != nil {
 		return TemplateResult{}, fmt.Errorf("parsing extra-copies: %w", err)
@@ -163,7 +159,6 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		},
 	}
 
-	// Create volumes in build stage
 	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
 		buildPipeline = append(buildPipeline, *volumeStep)
 	}
@@ -193,7 +188,6 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		},
 	}
 
-	// Copy volumes from build stage
 	for _, vol := range volumes {
 		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
 			Copy: &CopyStepResult{
@@ -300,7 +294,6 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		buildParams["tag"] = tag
 	}
 
-	// Parse volumes early so we can use them in build stage
 	volumes, err := ParseVolumes(params)
 	if err != nil {
 		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
@@ -313,7 +306,6 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		},
 	}
 
-	// Create volumes in build stage
 	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
 		buildPipeline = append(buildPipeline, *volumeStep)
 	}
@@ -337,7 +329,6 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		},
 	}
 
-	// Copy volumes from build stage
 	for _, vol := range volumes {
 		rootfsPipeline = append(rootfsPipeline, PipelineStepResult{
 			Copy: &CopyStepResult{
@@ -417,7 +408,6 @@ type BinarySpec struct {
 	Cgo        bool
 }
 
-// ParseBinaries extracts binary specifications from template params.
 func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
 	binariesParam, ok := params["binaries"]
 	if !ok {

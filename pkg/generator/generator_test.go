@@ -7,6 +7,7 @@ import (
 	"github.com/greboid/dfo/pkg/config"
 	"github.com/greboid/dfo/pkg/packages"
 	"github.com/greboid/dfo/pkg/util"
+	"github.com/greboid/dfo/pkg/versions"
 )
 
 func TestExpandVars(t *testing.T) {
@@ -253,7 +254,7 @@ func TestGeneratePackageInstallForEnv(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19", "", "")
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 	tests := []struct {
 		name     string
@@ -307,7 +308,7 @@ func TestGenerateRootfsPackageInstallForEnv(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19", "", "")
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 	tests := []struct {
 		name     string
@@ -357,7 +358,7 @@ func TestGenerateRunWithBuildDeps(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19", "", "")
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 	tests := []struct {
 		name      string
@@ -443,7 +444,7 @@ func TestNew(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 
-	g := New(cfg, outputDir, fs, client, "3.19", "", "")
+	g := New(cfg, outputDir, fs, client, "3.19", "", "", "docker.io", nil)
 
 	if g.config != cfg {
 		t.Error("config not set correctly")
@@ -451,15 +452,15 @@ func TestNew(t *testing.T) {
 	if g.outputDir != outputDir {
 		t.Errorf("expected outputDir %q, got %q", outputDir, g.outputDir)
 	}
-	if g.outputFilename != "Containerfile.gotpl" {
-		t.Errorf("expected default filename %q, got %q", "Containerfile.gotpl", g.outputFilename)
+	if g.outputFilename != "Containerfile" {
+		t.Errorf("expected default filename %q, got %q", "Containerfile", g.outputFilename)
 	}
 }
 
 func TestSetOutputFilename(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
-	g := New(&config.BuildConfig{}, "tmp", fs, client, "3.19", "", "")
+	g := New(&config.BuildConfig{}, "tmp", fs, client, "3.19", "", "", "docker.io", nil)
 	customFilename := "Dockerfile.template"
 
 	g.SetOutputFilename(customFilename)
@@ -531,7 +532,7 @@ func TestGeneratePipelineStep(t *testing.T) {
 			"VERSION": "v1.0.0",
 		},
 	}
-	g := New(cfg, "output", fs, client, "3.19", "", "")
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 	tests := []struct {
 		name     string
@@ -690,7 +691,7 @@ func TestGenerateIncludeCall(t *testing.T) {
 	fs := util.NewTestFS()
 	client := packages.NewAlpineClient()
 	cfg := &config.BuildConfig{}
-	g := New(cfg, "output", fs, client, "3.19", "", "")
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 	tests := []struct {
 		name     string
@@ -856,7 +857,7 @@ func TestGenerate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
 			client := packages.NewAlpineClient()
-			g := New(tt.cfg, "output", fs, client, "3.19", "", "")
+			g := New(tt.cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 			err := g.Generate()
 			if (err != nil) != tt.wantErr {
@@ -865,7 +866,7 @@ func TestGenerate(t *testing.T) {
 			}
 
 			if !tt.wantErr {
-				content, err := fs.ReadFile("output/Containerfile.gotpl")
+				content, err := fs.ReadFile("output/Containerfile")
 				if err != nil {
 					t.Fatalf("failed to read generated file: %v", err)
 				}
@@ -886,7 +887,7 @@ func TestGenerateStage(t *testing.T) {
 			Labels: map[string]string{"version": "1.0"},
 		},
 	}
-	g := New(cfg, "output", fs, client, "3.19", "", "")
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 	tests := []struct {
 		name        string
@@ -905,7 +906,9 @@ func TestGenerateStage(t *testing.T) {
 			},
 			isFinal: false,
 			contains: []string{
-				`FROM {{image "alpine"}} AS builder`,
+				"FROM",
+				"@sha256:",
+				"AS builder",
 			},
 			notContains: []string{
 				"LABEL",
@@ -921,7 +924,8 @@ func TestGenerateStage(t *testing.T) {
 			},
 			isFinal: true,
 			contains: []string{
-				`FROM {{image "alpine"}}`,
+				"FROM",
+				"@sha256:",
 				`LABEL version="1.0"`,
 			},
 			notContains: []string{
@@ -1218,7 +1222,7 @@ func TestValidateVariableReferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
 			client := packages.NewAlpineClient()
-			g := New(tt.cfg, "output", fs, client, "3.19", "", "")
+			g := New(tt.cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 			err := g.validateVariableReferences()
 
 			if tt.wantError {
@@ -1288,14 +1292,14 @@ func TestGenerateWithVariableValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := util.NewTestFS()
 			client := packages.NewAlpineClient()
-			g := New(tt.cfg, "output", fs, client, "3.19", "", "")
+			g := New(tt.cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 			err := g.Generate()
 
 			if tt.wantError {
 				if err == nil {
 					t.Error("expected error, got nil")
 				}
-				_, statErr := fs.Stat("output/Containerfile.gotpl")
+				_, statErr := fs.Stat("output/Containerfile")
 				if statErr == nil {
 					t.Error("output file should not be created when validation fails")
 				}
@@ -1316,7 +1320,7 @@ func TestGenerateStageContent(t *testing.T) {
 			Name: "test",
 		},
 	}
-	g := New(cfg, "output", fs, client, "3.19", "", "")
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
 
 	tests := []struct {
 		name     string
@@ -1400,5 +1404,327 @@ func TestGenerateStageContent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+func TestGenerateBOM(t *testing.T) {
+	tests := []struct {
+		name     string
+		packages map[string]string
+		images   map[string]string
+		versions map[string]versions.VersionMetadata
+		want     string
+	}{
+		{
+			name:     "empty BOM",
+			packages: map[string]string{},
+			images:   map[string]string{},
+			versions: map[string]versions.VersionMetadata{},
+			want:     "",
+		},
+		{
+			name: "packages only",
+			packages: map[string]string{
+				"git":             "2.43.0-r0",
+				"ca-certificates": "20230506-r0",
+			},
+			images:   map[string]string{},
+			versions: map[string]versions.VersionMetadata{},
+			want:     `# BOM: {"apk:ca-certificates":"20230506-r0","apk:git":"2.43.0-r0"}`,
+		},
+		{
+			name:     "images only",
+			packages: map[string]string{},
+			images: map[string]string{
+				"alpine": "abc123def456",
+				"golang": "xyz789uvw012",
+			},
+			versions: map[string]versions.VersionMetadata{},
+			want:     `# BOM: {"image:alpine":"abc123def456","image:golang":"xyz789uvw012"}`,
+		},
+		{
+			name:     "versions only",
+			packages: map[string]string{},
+			images:   map[string]string{},
+			versions: map[string]versions.VersionMetadata{
+				"prometheus": {Version: "v2.49.1"},
+			},
+			want: `# BOM: {"prometheus":"v2.49.1"}`,
+		},
+		{
+			name: "all types combined",
+			packages: map[string]string{
+				"busybox": "1.36.1-r15",
+				"musl":    "1.2.4_git20230717-r4",
+			},
+			images: map[string]string{
+				"alpine": "abc123",
+			},
+			versions: map[string]versions.VersionMetadata{
+				"prometheus": {Version: "v2.49.1"},
+			},
+			want: `# BOM: {"apk:busybox":"1.36.1-r15","apk:musl":"1.2.4_git20230717-r4","image:alpine":"abc123","prometheus":"v2.49.1"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := util.NewTestFS()
+			client := packages.NewAlpineClient()
+			cfg := &config.BuildConfig{}
+			g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
+
+			g.resolvedPackages = tt.packages
+			g.resolvedImages = tt.images
+			g.resolvedVersions = tt.versions
+
+			result := g.generateBOM()
+
+			if tt.want == "" {
+				if result != "" {
+					t.Errorf("expected empty BOM, got %q", result)
+				}
+			} else {
+				expected := tt.want + "\n"
+				if result != expected {
+					t.Errorf("expected:\n%s\ngot:\n%s", expected, result)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateWithBOM(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *config.BuildConfig
+		contains []string
+	}{
+		{
+			name: "simple config with packages generates BOM",
+			cfg: &config.BuildConfig{
+				Package: config.Package{
+					Name: "test-app",
+				},
+				Stages: []config.Stage{
+					{
+						Name: "final",
+						Environment: config.Environment{
+							BaseImage: "alpine",
+							Packages:  []string{"git"},
+						},
+						Pipeline: []config.PipelineStep{},
+					},
+				},
+			},
+			contains: []string{
+				"# BOM:",
+				`"apk:git":`,
+				`"image:alpine":`,
+			},
+		},
+		{
+			name: "config with multiple packages",
+			cfg: &config.BuildConfig{
+				Package: config.Package{
+					Name: "multi-package-app",
+				},
+				Stages: []config.Stage{
+					{
+						Name: "final",
+						Environment: config.Environment{
+							BaseImage: "alpine",
+							Packages:  []string{"git", "ca-certificates", "curl"},
+						},
+						Pipeline: []config.PipelineStep{},
+					},
+				},
+			},
+			contains: []string{
+				"# BOM:",
+				`"apk:git":`,
+				`"apk:ca-certificates":`,
+				`"apk:curl":`,
+				`"image:alpine":`,
+			},
+		},
+		{
+			name: "config with build deps also included in BOM",
+			cfg: &config.BuildConfig{
+				Package: config.Package{
+					Name: "build-deps-app",
+				},
+				Stages: []config.Stage{
+					{
+						Name: "final",
+						Environment: config.Environment{
+							BaseImage: "alpine",
+						},
+						Pipeline: []config.PipelineStep{
+							{
+								Run:       "echo building",
+								BuildDeps: []string{"make", "gcc"},
+							},
+						},
+					},
+				},
+			},
+			contains: []string{
+				"# BOM:",
+				`"apk:make":`,
+				`"apk:gcc":`,
+				`"image:alpine":`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := util.NewTestFS()
+			client := packages.NewAlpineClient()
+			g := New(tt.cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
+
+			err := g.Generate()
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+
+			content, err := fs.ReadFile("output/Containerfile")
+			if err != nil {
+				t.Fatalf("failed to read generated file: %v", err)
+			}
+
+			contentStr := string(content)
+
+			if !strings.HasPrefix(contentStr, "# BOM:") {
+				t.Error("expected BOM to be at the beginning of the file")
+			}
+
+			for _, substr := range tt.contains {
+				if !strings.Contains(contentStr, substr) {
+					t.Errorf("expected result to contain %q", substr)
+				}
+			}
+		})
+	}
+}
+
+func TestBOMSortedOutput(t *testing.T) {
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{
+		Package: config.Package{Name: "test"},
+		Stages: []config.Stage{
+			{
+				Name: "final",
+				Environment: config.Environment{
+					BaseImage: "alpine",
+					Packages:  []string{"zlib", "git", "musl", "ca-certificates"},
+				},
+				Pipeline: []config.PipelineStep{},
+			},
+		},
+	}
+
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
+
+	err := g.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	content, err := fs.ReadFile("output/Containerfile")
+	if err != nil {
+		t.Fatalf("failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+
+	lines := strings.Split(contentStr, "\n")
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "# BOM:") {
+		t.Fatal("BOM not found at beginning of file")
+	}
+
+	bomLine := lines[0]
+
+	caIndex := strings.Index(bomLine, `"apk:ca-certificates"`)
+	gitIndex := strings.Index(bomLine, `"apk:git"`)
+	muslIndex := strings.Index(bomLine, `"apk:musl"`)
+	zlibIndex := strings.Index(bomLine, `"apk:zlib"`)
+	alpineIndex := strings.Index(bomLine, `"image:alpine"`)
+
+	if caIndex == -1 || gitIndex == -1 || muslIndex == -1 || zlibIndex == -1 || alpineIndex == -1 {
+		t.Fatal("not all expected entries found in BOM")
+	}
+
+	if !(caIndex < gitIndex && gitIndex < muslIndex && muslIndex < zlibIndex && zlibIndex < alpineIndex) {
+		t.Error("BOM entries are not in sorted order")
+	}
+}
+
+func TestBOMWithMultiStage(t *testing.T) {
+	fs := util.NewTestFS()
+	client := packages.NewAlpineClient()
+	cfg := &config.BuildConfig{
+		Package: config.Package{
+			Name: "multi-stage-app",
+		},
+		Stages: []config.Stage{
+			{
+				Name: "builder",
+				Environment: config.Environment{
+					BaseImage: "golang",
+					Packages:  []string{"git"},
+				},
+				Pipeline: []config.PipelineStep{
+					{
+						Run: "go build -o /app",
+					},
+				},
+			},
+			{
+				Name: "final",
+				Environment: config.Environment{
+					BaseImage: "alpine",
+					Packages:  []string{"ca-certificates"},
+				},
+				Pipeline: []config.PipelineStep{
+					{
+						Copy: &config.CopyStep{
+							FromStage: "builder",
+							From:      "/app",
+							To:        "/usr/local/bin/app",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	g := New(cfg, "output", fs, client, "3.19", "", "", "docker.io", nil)
+
+	err := g.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	content, err := fs.ReadFile("output/Containerfile")
+	if err != nil {
+		t.Fatalf("failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+
+	expectedContains := []string{
+		"# BOM:",
+		`"apk:git":`,
+		`"apk:ca-certificates":`,
+		`"image:alpine":`,
+		`"image:golang":`,
+	}
+
+	for _, substr := range expectedContains {
+		if !strings.Contains(contentStr, substr) {
+			t.Errorf("expected BOM to contain %q", substr)
+		}
 	}
 }

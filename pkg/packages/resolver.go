@@ -48,7 +48,6 @@ func (r *Resolver) Resolve(specs []PackageSpec) ([]ResolvedPackage, error) {
 		return nil, err
 	}
 
-	// Use apkutils to flatten dependencies
 	slog.Debug("flattening dependencies",
 		"requested_packages", names,
 		"available_packages", len(allPackages))

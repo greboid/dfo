@@ -169,7 +169,6 @@ func DownloadVerifyExtract(params map[string]any) (PipelineResult, error) {
 
 	combinedCmd := strings.Join(cmdParts, " && \\\n    ")
 
-	// Determine build deps based on what's needed
 	buildDeps := []string{"busybox", "curl"}
 	if extractDir != "" && strings.HasSuffix(destination, ".zip") {
 		buildDeps = append(buildDeps, "unzip")

@@ -3,6 +3,7 @@ package processor
 import (
 	"fmt"
 	iofs "io/fs"
+	"sync"
 
 	"github.com/greboid/dfo/pkg/util"
 )
@@ -33,38 +34,39 @@ func WalkAndProcess(fs util.WalkableFS, dir string, processor FileProcessor) (*B
 		return nil, fmt.Errorf("%s is not a directory", dir)
 	}
 
+	configFiles, err := FindConfigFiles(fs, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	const maxConcurrency = 5
 	result := &BatchResult{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, maxConcurrency)
 
-	_ = fs.WalkDir(dir, func(path string, d iofs.DirEntry, err error) error {
-		if err != nil {
-			result.Errors++
-			result.ErrorDetails = append(result.ErrorDetails, ProcessingError{
-				Path: path,
-				Err:  err,
-			})
-			return nil
-		}
+	for _, configPath := range configFiles {
+		wg.Go(func() {
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
 
-		if d.IsDir() {
-			return nil
-		}
+			if err := processor(configPath); err != nil {
+				mu.Lock()
+				result.Errors++
+				result.ErrorDetails = append(result.ErrorDetails, ProcessingError{
+					Path: configPath,
+					Err:  err,
+				})
+				mu.Unlock()
+			} else {
+				mu.Lock()
+				result.Processed++
+				mu.Unlock()
+			}
+		})
+	}
 
-		if d.Name() != DefaultConfigFilename {
-			return nil
-		}
-
-		if err = processor(path); err != nil {
-			result.Errors++
-			result.ErrorDetails = append(result.ErrorDetails, ProcessingError{
-				Path: path,
-				Err:  err,
-			})
-			return nil
-		}
-
-		result.Processed++
-		return nil
-	})
+	wg.Wait()
 
 	return result, nil
 }

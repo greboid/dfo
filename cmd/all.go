@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
 
+	"github.com/greboid/dfo/pkg/images"
 	"github.com/greboid/dfo/pkg/processor"
 	"github.com/greboid/dfo/pkg/util"
 	"github.com/spf13/cobra"
@@ -15,6 +17,7 @@ var (
 	allAlpineVersion string
 	allGitUser       string
 	allGitPass       string
+	allRegistry      string
 )
 
 var allCmd = &cobra.Command{
@@ -30,6 +33,8 @@ func init() {
 	allCmd.Flags().StringVar(&allAlpineVersion, "alpine-version", "", "Alpine Linux version to resolve packages against (default: auto-detect latest)")
 	allCmd.Flags().StringVar(&allGitUser, "git-user", "", "Git username for private repository access")
 	allCmd.Flags().StringVar(&allGitPass, "git-pass", "", "Git password/token for private repository access")
+	allCmd.Flags().StringVar(&allRegistry, "registry", "", "Container registry to use for image resolution (required)")
+	_ = allCmd.MarkFlagRequired("registry")
 }
 
 func runAll(_ *cobra.Command, _ []string) error {
@@ -47,12 +52,18 @@ func runAll(_ *cobra.Command, _ []string) error {
 		fmt.Printf("Auto-detected Alpine version: %s\n", resolvedVersion)
 	}
 
+	sharedImageResolver := images.NewResolver(allRegistry, true)
+
+	var outputMu sync.Mutex
+
 	fileProcessor := func(configPath string) error {
-		result, err := processor.ProcessConfigInPlace(fs, configPath, alpineClient, resolvedVersion, allGitUser, allGitPass)
+		result, err := processor.ProcessConfigInPlace(fs, configPath, alpineClient, resolvedVersion, allGitUser, allGitPass, allRegistry, sharedImageResolver)
 		if err != nil {
 			return err
 		}
+		outputMu.Lock()
 		fmt.Printf("✓ %s\n", result.PackageName)
+		outputMu.Unlock()
 		return nil
 	}
 

@@ -156,7 +156,6 @@ func TestGoAppWithGoTags(t *testing.T) {
 		t.Errorf("expected pipeline to use build-go-static, got %s", buildStep.Uses)
 	}
 
-	// Verify go-tags is passed through to the build pipeline
 	goTags, ok := buildStep.With["go-tags"].(string)
 	if !ok {
 		t.Fatalf("expected go-tags in build parameters")
@@ -579,12 +578,10 @@ func TestGoAppWithExtraCopies(t *testing.T) {
 		t.Errorf("expected rootfs stage name 'rootfs', got %q", rootfsStage.Name)
 	}
 
-	// Should have: binary copy, notices copy, 2 extra-copies = 4 total
 	if len(rootfsStage.Pipeline) != 4 {
 		t.Errorf("expected 4 copy steps in rootfs (binary + notices + 2 extra-copies), got %d", len(rootfsStage.Pipeline))
 	}
 
-	// Verify extra-copies are present
 	foundStatic := false
 	foundTemplates := false
 	for _, step := range rootfsStage.Pipeline {
@@ -644,7 +641,6 @@ func TestMultiGoAppSameRepo(t *testing.T) {
 		t.Errorf("expected build stage name 'build', got %q", buildStage.Name)
 	}
 
-	// Should have 1 clone + 3 builds = 4 steps (same repo cloned once)
 	cloneCount := 0
 	buildCount := 0
 	for _, step := range buildStage.Pipeline {
@@ -663,13 +659,11 @@ func TestMultiGoAppSameRepo(t *testing.T) {
 	}
 
 	rootfsStage := result.Stages[1]
-	// Should have 3 binary copies + 3 notices copies = 6
 	if len(rootfsStage.Pipeline) != 6 {
 		t.Errorf("expected 6 copy steps in rootfs (3 binaries + 3 notices), got %d", len(rootfsStage.Pipeline))
 	}
 
 	finalStage := result.Stages[2]
-	// Entrypoint should be soju (marked with entrypoint: true)
 	if len(finalStage.Environment.Entrypoint) == 0 || finalStage.Environment.Entrypoint[0] != "/soju" {
 		t.Errorf("expected entrypoint /soju, got %v", finalStage.Environment.Entrypoint)
 	}
@@ -707,7 +701,6 @@ func TestMultiGoAppDifferentRepos(t *testing.T) {
 
 	buildStage := result.Stages[0]
 
-	// Should have 2 clones (different repos) + 2 builds = 4 steps
 	cloneCount := 0
 	buildCount := 0
 	for _, step := range buildStage.Pipeline {
@@ -726,12 +719,10 @@ func TestMultiGoAppDifferentRepos(t *testing.T) {
 	}
 
 	rootfsStage := result.Stages[1]
-	// Should have 2 binary copies + 2 notices copies + 1 extra-copy = 5
 	if len(rootfsStage.Pipeline) != 5 {
 		t.Errorf("expected 5 copy steps in rootfs, got %d", len(rootfsStage.Pipeline))
 	}
 
-	// Verify extra-copy is present
 	foundLanguages := false
 	for _, step := range rootfsStage.Pipeline {
 		if step.Copy != nil && step.Copy.From == "/src/ergochat/ergo/languages/" {
@@ -746,7 +737,6 @@ func TestMultiGoAppDifferentRepos(t *testing.T) {
 	}
 
 	finalStage := result.Stages[2]
-	// Entrypoint should be certwrapper (marked with entrypoint: true)
 	if len(finalStage.Environment.Entrypoint) == 0 || finalStage.Environment.Entrypoint[0] != "/certwrapper" {
 		t.Errorf("expected entrypoint /certwrapper, got %v", finalStage.Environment.Entrypoint)
 	}
@@ -772,7 +762,6 @@ func TestMultiGoAppDefaultEntrypoint(t *testing.T) {
 	}
 
 	finalStage := result.Stages[2]
-	// Default entrypoint should be first binary (app1)
 	if len(finalStage.Environment.Entrypoint) == 0 || finalStage.Environment.Entrypoint[0] != "/app1" {
 		t.Errorf("expected default entrypoint /app1, got %v", finalStage.Environment.Entrypoint)
 	}
@@ -878,7 +867,6 @@ func TestRustBuilder(t *testing.T) {
 				if stage.Environment.BaseImage != "rust" {
 					t.Errorf("expected base image rust, got %s", stage.Environment.BaseImage)
 				}
-				// Default packages should include git
 				if len(stage.Environment.Packages) != 1 || stage.Environment.Packages[0] != "git" {
 					t.Errorf("expected packages [git], got %v", stage.Environment.Packages)
 				}
@@ -898,7 +886,6 @@ func TestRustBuilder(t *testing.T) {
 			},
 			check: func(t *testing.T, result TemplateResult) {
 				stage := result.Stages[0]
-				// Should have git plus the additional packages
 				expectedPkgs := []string{"git", "openssl-dev", "sqlite-dev"}
 				if len(stage.Environment.Packages) != 3 {
 					t.Errorf("expected 3 packages, got %v", stage.Environment.Packages)
@@ -908,7 +895,6 @@ func TestRustBuilder(t *testing.T) {
 						t.Errorf("expected package %s at index %d, got %s", pkg, i, stage.Environment.Packages[i])
 					}
 				}
-				// Packages should not be passed to pipeline
 				if _, ok := stage.Pipeline[0].With["packages"]; ok {
 					t.Error("packages should not be passed to pipeline")
 				}
@@ -970,7 +956,6 @@ func TestRustApp(t *testing.T) {
 				if buildStage.Environment.BaseImage != "rust" {
 					t.Errorf("expected rust base image, got %s", buildStage.Environment.BaseImage)
 				}
-				// Should have git package
 				if len(buildStage.Environment.Packages) < 1 || buildStage.Environment.Packages[0] != "git" {
 					t.Errorf("expected git package, got %v", buildStage.Environment.Packages)
 				}
@@ -979,7 +964,6 @@ func TestRustApp(t *testing.T) {
 				if rootfsStage.Name != "rootfs" {
 					t.Errorf("expected rootfs stage name 'rootfs', got %q", rootfsStage.Name)
 				}
-				// Should have binary copy step
 				if len(rootfsStage.Pipeline) < 1 {
 					t.Error("expected at least 1 copy step in rootfs")
 				}
@@ -1007,7 +991,6 @@ func TestRustApp(t *testing.T) {
 			},
 			check: func(t *testing.T, result TemplateResult) {
 				buildStage := result.Stages[0]
-				// Should have git + openssl-dev
 				if len(buildStage.Environment.Packages) != 2 {
 					t.Errorf("expected 2 packages, got %v", buildStage.Environment.Packages)
 				}
@@ -1065,7 +1048,6 @@ func TestRustApp(t *testing.T) {
 			},
 			check: func(t *testing.T, result TemplateResult) {
 				buildStage := result.Stages[0]
-				// Should have create-directories step
 				hasCreateDirs := false
 				for _, step := range buildStage.Pipeline {
 					if step.Uses == "create-directories" {
@@ -1078,7 +1060,6 @@ func TestRustApp(t *testing.T) {
 				}
 
 				rootfsStage := result.Stages[1]
-				// Should have volume copy step
 				hasVolumeCopy := false
 				for _, step := range rootfsStage.Pipeline {
 					if step.Copy != nil && step.Copy.From == "/data" {

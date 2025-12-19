@@ -8,6 +8,7 @@ import (
 
 	"github.com/greboid/dfo/pkg/config"
 	"github.com/greboid/dfo/pkg/generator"
+	"github.com/greboid/dfo/pkg/images"
 	"github.com/greboid/dfo/pkg/packages"
 	"github.com/greboid/dfo/pkg/util"
 )
@@ -22,11 +23,12 @@ type WalkableFS = util.WalkableFS
 
 type StatFS = fs.StatFS
 
-func ProcessConfig(fs util.WritableFS, configPath, outputDir string, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass string) (*ProcessResult, error) {
+func ProcessConfig(fs util.WritableFS, configPath, outputDir string, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass, registry string, imageResolver *images.Resolver) (*ProcessResult, error) {
 	slog.Debug("processing config",
 		"config_path", configPath,
 		"output_dir", outputDir,
-		"alpine_version", alpineVersion)
+		"alpine_version", alpineVersion,
+		"registry", registry)
 
 	cfg, err := config.Load(fs, configPath)
 	if err != nil {
@@ -37,7 +39,7 @@ func ProcessConfig(fs util.WritableFS, configPath, outputDir string, alpineClien
 
 	packageDir := path.Join(outputDir, cfg.Package.Name)
 
-	gen := generator.New(cfg, packageDir, fs, alpineClient, alpineVersion, gitUser, gitPass)
+	gen := generator.New(cfg, packageDir, fs, alpineClient, alpineVersion, gitUser, gitPass, registry, imageResolver)
 	if err := gen.Generate(); err != nil {
 		return nil, fmt.Errorf("generating templates: %w", err)
 	}
@@ -47,10 +49,11 @@ func ProcessConfig(fs util.WritableFS, configPath, outputDir string, alpineClien
 	return &ProcessResult{PackageName: cfg.Package.Name}, nil
 }
 
-func ProcessConfigInPlace(fs util.WritableFS, configPath string, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass string) (*ProcessResult, error) {
+func ProcessConfigInPlace(fs util.WritableFS, configPath string, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass, registry string, imageResolver *images.Resolver) (*ProcessResult, error) {
 	slog.Debug("processing config in place",
 		"config_path", configPath,
-		"alpine_version", alpineVersion)
+		"alpine_version", alpineVersion,
+		"registry", registry)
 
 	cfg, err := config.Load(fs, configPath)
 	if err != nil {
@@ -61,7 +64,7 @@ func ProcessConfigInPlace(fs util.WritableFS, configPath string, alpineClient *p
 
 	outputDir := path.Dir(configPath)
 
-	gen := generator.New(cfg, outputDir, fs, alpineClient, alpineVersion, gitUser, gitPass)
+	gen := generator.New(cfg, outputDir, fs, alpineClient, alpineVersion, gitUser, gitPass, registry, imageResolver)
 	if err := gen.Generate(); err != nil {
 		return nil, fmt.Errorf("generating templates: %w", err)
 	}

@@ -2,12 +2,16 @@ package generator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/greboid/dfo/pkg/config"
+	"github.com/greboid/dfo/pkg/images"
 	"github.com/greboid/dfo/pkg/packages"
 	"github.com/greboid/dfo/pkg/pipelines"
 	"github.com/greboid/dfo/pkg/util"
@@ -26,21 +30,35 @@ type Generator struct {
 	fs               util.WritableFS
 	resolver         *packages.Resolver
 	versionResolver  *versions.Resolver
-	resolvedVersions map[string]string
+	imageResolver    *images.Resolver
+	resolvedVersions map[string]versions.VersionMetadata
+	resolvedPackages map[string]string
+	resolvedImages   map[string]string
+	mu               sync.Mutex
 }
 
-func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass string) *Generator {
+func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass, registry string, sharedImageResolver *images.Resolver) *Generator {
 	resolver := packages.NewResolver(alpineClient, alpineVersion)
 	versionResolver := versions.New(context.Background(), gitUser, gitPass)
+
+	var imageResolver *images.Resolver
+	if sharedImageResolver != nil {
+		imageResolver = sharedImageResolver
+	} else {
+		imageResolver = images.NewResolver(registry, true)
+	}
 
 	return &Generator{
 		config:           cfg,
 		outputDir:        outputDir,
-		outputFilename:   "Containerfile.gotpl",
+		outputFilename:   "Containerfile",
 		fs:               fs,
 		resolver:         resolver,
 		versionResolver:  versionResolver,
-		resolvedVersions: make(map[string]string),
+		imageResolver:    imageResolver,
+		resolvedVersions: make(map[string]versions.VersionMetadata),
+		resolvedPackages: make(map[string]string),
+		resolvedImages:   make(map[string]string),
 	}
 }
 
@@ -60,13 +78,111 @@ func (g *Generator) resolveVersions() error {
 		return nil
 	}
 
+	const maxConcurrency = 10
+	type versionResult struct {
+		key      string
+		value    string
+		resolved versions.VersionMetadata
+		err      error
+	}
+
+	results := make(chan versionResult, len(g.config.Versions))
+	semaphore := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
 	for key, value := range g.config.Versions {
-		resolved, err := g.versionResolver.Resolve(key, value)
-		if err != nil {
-			return fmt.Errorf("resolving version %q: %w", key, err)
+		wg.Go(func() {
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			resolved, err := g.versionResolver.Resolve(key, value)
+			results <- versionResult{key: key, value: value, resolved: resolved, err: err}
+		})
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for result := range results {
+		if result.err != nil {
+			return fmt.Errorf("resolving version %q: %w", result.key, result.err)
 		}
-		g.resolvedVersions[key] = resolved
-		slog.Debug("resolved version", "key", key, "value", value, "resolved", resolved)
+		g.resolvedVersions[result.key] = result.resolved
+		slog.Debug("resolved version", "key", result.key, "value", result.value, "resolved", result.resolved)
+	}
+
+	return nil
+}
+
+func (g *Generator) resolveImage(imageName string) (*images.ResolvedImage, error) {
+	resolved, err := g.imageResolver.Resolve(context.Background(), imageName)
+	if err != nil {
+		return nil, fmt.Errorf("resolving image %q: %w", imageName, err)
+	}
+
+	g.mu.Lock()
+	digest := resolved.Digest
+	if idx := strings.Index(digest, ":"); idx != -1 {
+		digest = digest[idx+1:]
+	}
+	g.resolvedImages[imageName] = digest
+	g.mu.Unlock()
+
+	return resolved, nil
+}
+
+func (g *Generator) collectImageReferences() []string {
+	imageSet := make(map[string]bool)
+	var usedImages []string
+
+	for _, stage := range g.config.Stages {
+		if stage.Environment.BaseImage != "" && !imageSet[stage.Environment.BaseImage] {
+			imageSet[stage.Environment.BaseImage] = true
+			usedImages = append(usedImages, stage.Environment.BaseImage)
+		}
+	}
+
+	return usedImages
+}
+
+func (g *Generator) resolveImagesInParallel() error {
+	imagesToResolve := g.collectImageReferences()
+	if len(imagesToResolve) == 0 {
+		return nil
+	}
+
+	const maxConcurrency = 10
+	type imageResult struct {
+		imageName string
+		err       error
+	}
+
+	results := make(chan imageResult, len(imagesToResolve))
+	semaphore := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
+	for _, imageName := range imagesToResolve {
+		wg.Go(func() {
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			_, err := g.resolveImage(imageName)
+			results <- imageResult{imageName: imageName, err: err}
+		})
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for result := range results {
+		if result.err != nil {
+			return fmt.Errorf("resolving image %q: %w", result.imageName, result.err)
+		}
+		slog.Debug("pre-resolved image", "image", result.imageName)
 	}
 
 	return nil
@@ -80,7 +196,15 @@ func (g *Generator) buildVarsMap() map[string]string {
 	}
 
 	for k, v := range g.resolvedVersions {
-		vars["versions."+k] = v
+		vars["versions."+k] = v.Version
+
+		if v.URL != "" {
+			vars["versions."+k+".url"] = v.URL
+		}
+
+		if v.Checksum != "" {
+			vars["versions."+k+".checksum"] = v.Checksum
+		}
 	}
 
 	return vars
@@ -92,7 +216,18 @@ func (g *Generator) resolvePackages(pkgSpecs []string) ([]packages.ResolvedPacka
 		return nil, fmt.Errorf("parsing package specs: %w", err)
 	}
 
-	return g.resolver.Resolve(specs)
+	resolved, err := g.resolver.Resolve(specs)
+	if err != nil {
+		return nil, err
+	}
+
+	g.mu.Lock()
+	for _, pkg := range resolved {
+		g.resolvedPackages[pkg.Name] = pkg.Version
+	}
+	g.mu.Unlock()
+
+	return resolved, nil
 }
 
 func (g *Generator) resolveAndFormatPackages(pkgSpecs []string, firstIndent bool, indent string) (string, error) {
@@ -117,8 +252,22 @@ func (g *Generator) resolveAndFormatPackages(pkgSpecs []string, firstIndent bool
 }
 
 func (g *Generator) Generate() error {
-	if err := g.resolveVersions(); err != nil {
-		return fmt.Errorf("resolving versions: %w", err)
+	var versionErr, imageErr error
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		versionErr = g.resolveVersions()
+	})
+	wg.Go(func() {
+		imageErr = g.resolveImagesInParallel()
+	})
+	wg.Wait()
+
+	if versionErr != nil {
+		return fmt.Errorf("resolving versions: %w", versionErr)
+	}
+	if imageErr != nil {
+		return fmt.Errorf("resolving images: %w", imageErr)
 	}
 
 	if err := g.validateVariableReferences(); err != nil {
@@ -176,8 +325,16 @@ func (g *Generator) generateDockerfile() error {
 		b.WriteString("\n")
 	}
 
+	var output strings.Builder
+	bom := g.generateBOM()
+	if bom != "" {
+		output.WriteString(bom)
+		output.WriteString("\n")
+	}
+	output.WriteString(b.String())
+
 	outputPath := path.Join(g.outputDir, g.outputFilename)
-	if err := g.fs.WriteFile(outputPath, []byte(b.String()), filePerms); err != nil {
+	if err := g.fs.WriteFile(outputPath, []byte(output.String()), filePerms); err != nil {
 		return fmt.Errorf("writing %s: %w", g.outputFilename, err)
 	}
 
@@ -195,10 +352,15 @@ func (g *Generator) generateStage(stage config.Stage, isFinalStage bool) (string
 			b.WriteString(fmt.Sprintf("FROM %s AS %s\n\n", stage.Environment.ExternalImage, stage.Name))
 		}
 	} else {
+		resolvedImage, err := g.resolveImage(stage.Environment.BaseImage)
+		if err != nil {
+			return "", fmt.Errorf("resolving base image: %w", err)
+		}
+
 		if isFinalStage {
-			b.WriteString(fmt.Sprintf("FROM {{image %q}}\n\n", stage.Environment.BaseImage))
+			b.WriteString(fmt.Sprintf("FROM %s\n\n", resolvedImage.FullRef))
 		} else {
-			b.WriteString(fmt.Sprintf("FROM {{image %q}} AS %s\n\n", stage.Environment.BaseImage, stage.Name))
+			b.WriteString(fmt.Sprintf("FROM %s AS %s\n\n", resolvedImage.FullRef, stage.Name))
 		}
 	}
 
@@ -416,17 +578,20 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 
 	vars := g.buildVarsMap()
 
-	for _, key := range []string{"tag", "commit"} {
-		if value, ok := step.With[key]; ok {
-			expanded, err := util.ExpandVarsStrict(value.(string), vars, "")
+	expandedWith := make(map[string]any)
+	for key, value := range step.With {
+		if strValue, ok := value.(string); ok {
+			expanded, err := util.ExpandVarsStrict(strValue, vars, "")
 			if err != nil {
-				return "", fmt.Errorf("variable not found in pipeline %q (step %q)", step.Uses, step.Name)
+				return "", fmt.Errorf("variable %q not found in pipeline %q (step %q)", strValue, step.Uses, step.Name)
 			}
-			step.With[key] = expanded
+			expandedWith[key] = expanded
+		} else {
+			expandedWith[key] = value
 		}
 	}
 
-	result, err := pipeline(step.With)
+	result, err := pipeline(expandedWith)
 	if err != nil {
 		return "", fmt.Errorf("executing pipeline %q: %w", step.Uses, err)
 	}
@@ -441,7 +606,6 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 		stepsContent.WriteString(pipelineStep.Content)
 	}
 
-	// If there are build-deps, wrap the content
 	if len(allBuildDeps) > 0 {
 		return g.wrapWithBuildDeps(stepsContent.String(), allBuildDeps, step.Uses), nil
 	}
@@ -528,4 +692,46 @@ func (g *Generator) formatRunCommand(run string) string {
 	}
 
 	return b.String()
+}
+
+func (g *Generator) generateBOM() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	bom := make(map[string]string)
+
+	for pkg, version := range g.resolvedPackages {
+		bom[fmt.Sprintf("apk:%s", pkg)] = version
+	}
+
+	for key, metadata := range g.resolvedVersions {
+		bom[key] = metadata.Version
+	}
+
+	for image, digest := range g.resolvedImages {
+		bom[fmt.Sprintf("image:%s", image)] = digest
+	}
+
+	if len(bom) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(bom))
+	for key := range bom {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	sortedBOM := make(map[string]string)
+	for _, key := range keys {
+		sortedBOM[key] = bom[key]
+	}
+
+	jsonBytes, err := json.Marshal(sortedBOM)
+	if err != nil {
+		slog.Warn("failed to generate BOM", "error", err)
+		return ""
+	}
+
+	return fmt.Sprintf("# BOM: %s\n", string(jsonBytes))
 }

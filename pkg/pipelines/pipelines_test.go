@@ -1987,7 +1987,6 @@ func TestCloneAndBuildGoWithPatches(t *testing.T) {
 				if !strings.Contains(steps[1].Content, "patch -p1") {
 					t.Errorf("expected patch command, got: %s", steps[1].Content)
 				}
-				// Verify patch is in build deps
 				hasPatch := false
 				for _, dep := range result.BuildDeps {
 					if dep == "patch" {
@@ -2032,7 +2031,6 @@ func TestCloneAndBuildGoWithPatches(t *testing.T) {
 				if len(steps) != 4 {
 					t.Errorf("expected 4 steps (clone + mod download + build + license), got %d", len(steps))
 				}
-				// Verify patch is NOT in build deps
 				for _, dep := range result.BuildDeps {
 					if dep == "patch" {
 						t.Errorf("unexpected 'patch' in BuildDeps when no patches specified")
@@ -2074,19 +2072,15 @@ func TestBuildGoOnly(t *testing.T) {
 				if len(steps) != 3 {
 					t.Errorf("expected 3 steps (mod download + build + license), got %d", len(steps))
 				}
-				// Check go mod download step
 				if !strings.Contains(steps[0].Content, "go mod download") {
 					t.Errorf("expected go mod download, got: %s", steps[0].Content)
 				}
-				// Check build step
 				if !strings.Contains(steps[1].Content, "go build") {
 					t.Errorf("expected go build, got: %s", steps[1].Content)
 				}
-				// Check default output is /main
 				if !strings.Contains(steps[1].Content, "-o /main") {
 					t.Errorf("expected default output /main, got: %s", steps[1].Content)
 				}
-				// Check default package is .
 				if !strings.Contains(steps[1].Content, "go build") {
 					t.Errorf("expected go build command, got: %s", steps[1].Content)
 				}
@@ -2102,11 +2096,9 @@ func TestBuildGoOnly(t *testing.T) {
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
-				// Check custom output
 				if !strings.Contains(steps[1].Content, "-o /myapp") {
 					t.Errorf("expected output /myapp, got: %s", steps[1].Content)
 				}
-				// Check custom package
 				if !strings.Contains(steps[1].Content, "./cmd/myapp") {
 					t.Errorf("expected package ./cmd/myapp, got: %s", steps[1].Content)
 				}
@@ -2121,7 +2113,6 @@ func TestBuildGoOnly(t *testing.T) {
 			wantErr: false,
 			check: func(t *testing.T, result PipelineResult) {
 				steps := result.Steps
-				// go-tags are combined with default tags
 				if !strings.Contains(steps[1].Content, "moderncsqlite") {
 					t.Errorf("expected custom tag in build command, got: %s", steps[1].Content)
 				}

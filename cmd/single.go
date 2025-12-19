@@ -13,6 +13,7 @@ var (
 	singleAlpineVersion string
 	singleGitUser       string
 	singleGitPass       string
+	singleRegistry      string
 )
 
 var singleCmd = &cobra.Command{
@@ -28,6 +29,8 @@ func init() {
 	singleCmd.Flags().StringVar(&singleAlpineVersion, "alpine-version", "", "Alpine Linux version to resolve packages against (default: auto-detect latest)")
 	singleCmd.Flags().StringVar(&singleGitUser, "git-user", "", "Git username for private repository access")
 	singleCmd.Flags().StringVar(&singleGitPass, "git-pass", "", "Git password/token for private repository access")
+	singleCmd.Flags().StringVar(&singleRegistry, "registry", "", "Container registry to use for image resolution (required)")
+	_ = singleCmd.MarkFlagRequired("registry")
 }
 
 func runSingle(_ *cobra.Command, args []string) error {
@@ -53,7 +56,7 @@ func runSingle(_ *cobra.Command, args []string) error {
 		fmt.Printf("Auto-detected Alpine version: %s\n", resolvedVersion)
 	}
 
-	result, err := processor.ProcessConfig(fs, configPath, singleOutputDir, alpineClient, resolvedVersion, singleGitUser, singleGitPass)
+	result, err := processor.ProcessConfig(fs, configPath, singleOutputDir, alpineClient, resolvedVersion, singleGitUser, singleGitPass, singleRegistry, nil)
 	if err != nil {
 		return fmt.Errorf("failed to process config: %w", err)
 	}

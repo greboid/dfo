@@ -63,8 +63,8 @@ func TestResolve_SpecificVersion(t *testing.T) {
 				t.Errorf("Resolve() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !tt.wantErr && got != tt.value {
-				t.Errorf("Resolve() = %v, want %v (specific version should be returned as-is)", got, tt.value)
+			if !tt.wantErr && got.Version != tt.value {
+				t.Errorf("Resolve() = %v, want %v (specific version should be returned as-is)", got.Version, tt.value)
 			}
 		})
 	}
@@ -79,9 +79,3 @@ func TestResolve_UnknownKey(t *testing.T) {
 		t.Error("expected error for unknown key, got nil")
 	}
 }
-
-// Note: We don't test actual resolution of "latest" versions here because:
-// 1. It requires network access to external services
-// 2. Results change over time
-// 3. It's better tested through integration tests
-// The resolver relies on the github.com/csmith/latest library which is well-tested.

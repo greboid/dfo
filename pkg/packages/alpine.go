@@ -35,7 +35,6 @@ func NewAlpineClient() *AlpineClient {
 func (c *AlpineClient) FetchIndex(version, repo string) (map[string]*apkutils.PackageInfo, error) {
 	cacheKey := fmt.Sprintf("%s:%s", version, repo)
 
-	// Check cache first
 	c.mu.RLock()
 	if cached, ok := c.indexCache[cacheKey]; ok {
 		c.mu.RUnlock()
@@ -123,7 +122,6 @@ func (c *AlpineClient) GetLatestStableVersion() (string, error) {
 
 	slog.Debug("fetching latest Alpine version from network")
 
-	// Fetch latest release information
 	resp, err := c.httpClient.Get(latestReleaseURL)
 	if err != nil {
 		return "", fmt.Errorf("fetching latest release info: %w", err)

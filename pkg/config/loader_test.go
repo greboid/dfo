@@ -586,7 +586,6 @@ stages:
       - run: echo deploy`,
 			expectError: false,
 			checkStage: func(t *testing.T, stage Stage) {
-				// Check first stage (template)
 				if stage.Name != "go-builder-0" {
 					t.Errorf("expected first stage name 'go-builder-0', got %q", stage.Name)
 				}

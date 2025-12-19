@@ -7,6 +7,12 @@ type VersionSpec struct {
 	Value string
 }
 
+type VersionMetadata struct {
+	Version  string
+	URL      string
+	Checksum string
+}
+
 func (s VersionSpec) IsLatest() bool {
 	return strings.HasPrefix(s.Value, "latest")
 }
