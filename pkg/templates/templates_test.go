@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/greboid/dfo/pkg/pipelines"
@@ -1386,7 +1387,7 @@ func TestParseBinaries(t *testing.T) {
 						"binary":     "app",
 						"package":    "./cmd/app",
 						"go-tags":    "netgo",
-						"ignore":     "example.com/private",
+						"ignore":     []any{"example.com/private"},
 						"entrypoint": true,
 						"cgo":        true,
 					},
@@ -1398,7 +1399,7 @@ func TestParseBinaries(t *testing.T) {
 					Binary:     "app",
 					Package:    "./cmd/app",
 					GoTags:     "netgo",
-					Ignore:     "example.com/private",
+					Ignore:     []string{"example.com/private"},
 					Entrypoint: true,
 					Cgo:        true,
 				},
@@ -1423,7 +1424,7 @@ func TestParseBinaries(t *testing.T) {
 						got[i].Binary != tt.want[i].Binary ||
 						got[i].Package != tt.want[i].Package ||
 						got[i].GoTags != tt.want[i].GoTags ||
-						got[i].Ignore != tt.want[i].Ignore ||
+						!reflect.DeepEqual(got[i].Ignore, tt.want[i].Ignore) ||
 						got[i].Entrypoint != tt.want[i].Entrypoint ||
 						got[i].Cgo != tt.want[i].Cgo {
 						t.Errorf("ParseBinaries()[%d] = %+v, want %+v", i, got[i], tt.want[i])

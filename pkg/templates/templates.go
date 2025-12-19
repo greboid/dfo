@@ -134,7 +134,7 @@ func goApp(params map[string]any) (TemplateResult, error) {
 	if tag, ok := params["tag"].(string); ok {
 		buildParams["tag"] = tag
 	}
-	if ignore, ok := params["ignore"].(string); ok {
+	if ignore, ok := params["ignore"].([]any); ok {
 		buildParams["ignore"] = ignore
 	}
 	if patches, ok := params["patches"]; ok {
@@ -411,7 +411,7 @@ type BinarySpec struct {
 	Package    string
 	Binary     string
 	GoTags     string
-	Ignore     string
+	Ignore     []string
 	Patches    []string
 	Entrypoint bool
 	Cgo        bool
@@ -465,8 +465,12 @@ func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
 			spec.GoTags = goTags
 		}
 
-		if ignore, ok := binaryMap["ignore"].(string); ok {
-			spec.Ignore = ignore
+		if ignore, ok := binaryMap["ignore"].([]any); ok {
+			for _, ig := range ignore {
+				if igs, ok := ig.(string); ok {
+					spec.Ignore = append(spec.Ignore, igs)
+				}
+			}
 		}
 
 		if patches, ok := binaryMap["patches"].([]any); ok {
@@ -542,7 +546,7 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 			"package": bin.Package,
 			"output":  "/" + bin.Binary,
 		}
-		if bin.Ignore != "" {
+		if len(bin.Ignore) > 0 {
 			buildParams["ignore"] = bin.Ignore
 		}
 		if bin.GoTags != "" {
