@@ -122,7 +122,10 @@ func (r *Resolver) resolvePostgresVersion(value string) (VersionMetadata, error)
 }
 
 func (r *Resolver) resolveAlpineVersion() (VersionMetadata, error) {
-	version, url, checksum, err := latest.AlpineRelease(r.ctx, nil)
+	opts := &latest.AlpineReleaseOptions{
+		Flavour: "minirootfs",
+	}
+	version, url, checksum, err := latest.AlpineRelease(r.ctx, opts)
 	if err != nil {
 		return VersionMetadata{}, fmt.Errorf("resolving Alpine version: %w", err)
 	}
