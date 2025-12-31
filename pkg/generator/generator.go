@@ -34,6 +34,7 @@ type Generator struct {
 	resolvedVersions map[string]versions.VersionMetadata
 	resolvedPackages map[string]string
 	resolvedImages   map[string]string
+	builtImages      map[string]string
 	mu               sync.Mutex
 }
 
@@ -59,6 +60,7 @@ func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineCl
 		resolvedVersions: make(map[string]versions.VersionMetadata),
 		resolvedPackages: make(map[string]string),
 		resolvedImages:   make(map[string]string),
+		builtImages:      make(map[string]string),
 	}
 }
 
@@ -71,6 +73,15 @@ func buildFetchCommand(url, dest string, extract bool) string {
 
 func (g *Generator) SetOutputFilename(filename string) {
 	g.outputFilename = filename
+}
+
+func (g *Generator) SetBuiltImages(builtImages map[string]string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	for imageName, digest := range builtImages {
+		g.builtImages[imageName] = digest
+	}
 }
 
 func (g *Generator) resolveVersions() error {
@@ -117,6 +128,25 @@ func (g *Generator) resolveVersions() error {
 }
 
 func (g *Generator) resolveImage(imageName string) (*images.ResolvedImage, error) {
+	g.mu.Lock()
+	if builtDigest, ok := g.builtImages[imageName]; ok {
+		g.mu.Unlock()
+
+		fullRef := fmt.Sprintf("%s@%s", imageName, builtDigest)
+
+		slog.Debug("Using built image digest",
+			"image", imageName,
+			"digest", builtDigest[:min(16, len(builtDigest))],
+		)
+
+		return &images.ResolvedImage{
+			Name:    imageName,
+			Digest:  builtDigest,
+			FullRef: fullRef,
+		}, nil
+	}
+	g.mu.Unlock()
+
 	resolved, err := g.imageResolver.Resolve(context.Background(), imageName)
 	if err != nil {
 		return nil, fmt.Errorf("resolving image %q: %w", imageName, err)
@@ -710,6 +740,14 @@ func (g *Generator) generateBOM() string {
 
 	for image, digest := range g.resolvedImages {
 		bom[fmt.Sprintf("image:%s", image)] = digest
+	}
+
+	for imageName, digest := range g.builtImages {
+		shortDigest := digest
+		if idx := strings.Index(digest, ":"); idx != -1 {
+			shortDigest = digest[idx+1:]
+		}
+		bom[fmt.Sprintf("built:%s", imageName)] = shortDigest
 	}
 
 	if len(bom) == 0 {
