@@ -203,7 +203,7 @@ func buildUpdateScript(layer []string) string {
 	script := "set -e\n"
 	for _, containerName := range layer {
 		script += fmt.Sprintf("echo 'Updating %s...'\n", containerName)
-		script += fmt.Sprintf("dfo single -d %s\n", containerName)
+		script += fmt.Sprintf("dfo single %s\n", containerName)
 	}
 	return script
 }
@@ -212,7 +212,7 @@ func buildFinalUpdateScript(layers [][]string) string {
 	script := "set -e\necho 'Updating all Containerfiles with built image digests...'\n"
 	for _, layer := range layers {
 		for _, containerName := range layer {
-			script += fmt.Sprintf("dfo single -d %s\n", containerName)
+			script += fmt.Sprintf("dfo single %s\n", containerName)
 		}
 	}
 	return script
