@@ -36,6 +36,14 @@ func Generate(
 		RunsOn: "ubuntu-latest",
 		Steps: []Step{
 			{
+				Name: "Setup Go",
+				Uses: "actions/setup-go@v6",
+				With: map[string]string{
+					"go-version": "stable",
+					"cache":      "false",
+				},
+			},
+			{
 				Name: "Install latest dfo",
 				Uses: "mattdowdell/go-installer@v0.3.0",
 				With: map[string]string{
@@ -79,6 +87,14 @@ func Generate(
 					},
 				},
 				{
+					Name: "Setup Go",
+					Uses: "actions/setup-go@v6",
+					With: map[string]string{
+						"go-version": "stable",
+						"cache":      "false",
+					},
+				},
+				{
 					Name: "Install latest dfo",
 					Uses: "mattdowdell/go-installer@v0.3.0",
 					With: map[string]string{
@@ -107,6 +123,14 @@ func Generate(
 					Uses: "actions/checkout@v4",
 					With: map[string]string{
 						"token": "${{ secrets.GITHUB_TOKEN }}",
+					},
+				},
+				{
+					Name: "Setup Go",
+					Uses: "actions/setup-go@v6",
+					With: map[string]string{
+						"go-version": "stable",
+						"cache":      "false",
 					},
 				},
 				{
