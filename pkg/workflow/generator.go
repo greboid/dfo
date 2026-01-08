@@ -153,6 +153,7 @@ if git diff --staged --quiet; then
   echo "No changes to commit"
 else
   git commit -m "Update Containerfiles and BOMs with built image digests"
+  git pull --rebase origin $(git branch --show-current)
   git push
 fi`,
 				},
