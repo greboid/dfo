@@ -357,7 +357,7 @@ func Clone(params map[string]any) (PipelineResult, error) {
 	}, nil
 }
 
-func generateGoBuildStep(pkg, output, extraLdflags, extraTags string, cgo bool) Step {
+func generateGoBuildStep(pkg, output, extraLdflags, extraTags, goExperiment string, cgo bool) Step {
 	ldflags := `-s -w -extldflags "-static"`
 	if extraLdflags != "" {
 		ldflags += " " + extraLdflags
@@ -370,9 +370,15 @@ func generateGoBuildStep(pkg, output, extraLdflags, extraTags string, cgo bool) 
 	if !cgo {
 		cgoEnabled = "0"
 	}
+
+	envVars := fmt.Sprintf("CGO_ENABLED=%s", cgoEnabled)
+	if goExperiment != "" {
+		envVars += fmt.Sprintf(" GOEXPERIMENT=%s", goExperiment)
+	}
+
 	return Step{
 		Name:    "Build binary",
-		Content: fmt.Sprintf("RUN CGO_ENABLED=%s go build -trimpath -tags '%s' -ldflags='%s' -o %s %s\n", cgoEnabled, tags, ldflags, output, pkg),
+		Content: fmt.Sprintf("RUN %s go build -trimpath -tags '%s' -ldflags='%s' -o %s %s\n", envVars, tags, ldflags, output, pkg),
 	}
 }
 
@@ -429,6 +435,11 @@ func CloneAndBuildGo(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
+	goExperiment, err := util.ValidateOptionalStringParamStrict(params, "go-experiment", "")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
 	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
 	if err != nil {
 		return PipelineResult{}, err
@@ -455,7 +466,7 @@ func CloneAndBuildGo(params map[string]any) (PipelineResult, error) {
 
 	steps = append(steps,
 		generateGoModDownloadStep(workdir),
-		generateGoBuildStep(pkg, output, "", goTags, cgo),
+		generateGoBuildStep(pkg, output, "", goTags, goExperiment, cgo),
 		generateLicenseStep(pkg, output, ignore),
 	)
 
@@ -502,6 +513,11 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
+	goExperiment, err := util.ValidateOptionalStringParamStrict(params, "go-experiment", "")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
 	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
 	if err != nil {
 		return PipelineResult{}, err
@@ -521,7 +537,7 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 
 	steps = append(steps,
 		generateGoModDownloadStep(workdir),
-		generateGoBuildStep(pkg, output, "", goTags, cgo),
+		generateGoBuildStep(pkg, output, "", goTags, goExperiment, cgo),
 		generateLicenseStep(pkg, output, ignore),
 	)
 
@@ -558,6 +574,11 @@ func BuildGoOnly(params map[string]any) (PipelineResult, error) {
 		return PipelineResult{}, err
 	}
 
+	goExperiment, err := util.ValidateOptionalStringParamStrict(params, "go-experiment", "")
+	if err != nil {
+		return PipelineResult{}, err
+	}
+
 	cgo, err := util.ValidateOptionalBoolParam(params, "cgo", false)
 	if err != nil {
 		return PipelineResult{}, err
@@ -565,7 +586,7 @@ func BuildGoOnly(params map[string]any) (PipelineResult, error) {
 
 	steps := []Step{
 		generateGoModDownloadStep(workdir),
-		generateGoBuildStep(pkg, output, "", goTags, cgo),
+		generateGoBuildStep(pkg, output, "", goTags, goExperiment, cgo),
 		generateLicenseStep(pkg, output, ignore),
 	}
 

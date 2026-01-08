@@ -141,6 +141,9 @@ func goApp(params map[string]any) (TemplateResult, error) {
 	if goTags, ok := params["go-tags"].(string); ok {
 		buildParams["go-tags"] = goTags
 	}
+	if goExperiment, ok := params["go-experiment"].(string); ok {
+		buildParams["go-experiment"] = goExperiment
+	}
 
 	volumes, err := ParseVolumes(params)
 	if err != nil {
@@ -397,15 +400,16 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 }
 
 type BinarySpec struct {
-	Repo       string
-	Tag        string
-	Package    string
-	Binary     string
-	GoTags     string
-	Ignore     []string
-	Patches    []string
-	Entrypoint bool
-	Cgo        bool
+	Repo         string
+	Tag          string
+	Package      string
+	Binary       string
+	GoTags       string
+	GoExperiment string
+	Ignore       []string
+	Patches      []string
+	Entrypoint   bool
+	Cgo          bool
 }
 
 func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
@@ -453,6 +457,10 @@ func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
 
 		if goTags, ok := binaryMap["go-tags"].(string); ok {
 			spec.GoTags = goTags
+		}
+
+		if goExperiment, ok := binaryMap["go-experiment"].(string); ok {
+			spec.GoExperiment = goExperiment
 		}
 
 		if ignore, ok := binaryMap["ignore"].([]any); ok {
@@ -541,6 +549,9 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		}
 		if bin.GoTags != "" {
 			buildParams["go-tags"] = bin.GoTags
+		}
+		if bin.GoExperiment != "" {
+			buildParams["go-experiment"] = bin.GoExperiment
 		}
 		if bin.Cgo {
 			buildParams["cgo"] = bin.Cgo
