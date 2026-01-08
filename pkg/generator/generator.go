@@ -147,20 +147,19 @@ func (g *Generator) resolveImage(imageName string) (*images.ResolvedImage, error
 	}
 	g.mu.Unlock()
 
-	resolved, err := g.imageResolver.Resolve(context.Background(), imageName)
-	if err != nil {
-		return nil, fmt.Errorf("resolving image %q: %w", imageName, err)
+	registry := g.imageResolver.GetRegistry()
+	fullRef := imageName
+	if registry != "" && !strings.Contains(imageName, "/") {
+		fullRef = fmt.Sprintf("%s/%s:latest", registry, imageName)
+	} else if !strings.Contains(imageName, ":") {
+		fullRef = imageName + ":latest"
 	}
 
-	g.mu.Lock()
-	digest := resolved.Digest
-	if idx := strings.Index(digest, ":"); idx != -1 {
-		digest = digest[idx+1:]
-	}
-	g.resolvedImages[imageName] = digest
-	g.mu.Unlock()
-
-	return resolved, nil
+	return &images.ResolvedImage{
+		Name:    imageName,
+		Digest:  "",
+		FullRef: fullRef,
+	}, nil
 }
 
 func (g *Generator) collectImageReferences() []string {
@@ -282,22 +281,8 @@ func (g *Generator) resolveAndFormatPackages(pkgSpecs []string, firstIndent bool
 }
 
 func (g *Generator) Generate() error {
-	var versionErr, imageErr error
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		versionErr = g.resolveVersions()
-	})
-	wg.Go(func() {
-		imageErr = g.resolveImagesInParallel()
-	})
-	wg.Wait()
-
-	if versionErr != nil {
-		return fmt.Errorf("resolving versions: %w", versionErr)
-	}
-	if imageErr != nil {
-		return fmt.Errorf("resolving images: %w", imageErr)
+	if err := g.resolveVersions(); err != nil {
+		return fmt.Errorf("resolving versions: %w", err)
 	}
 
 	if err := g.validateVariableReferences(); err != nil {

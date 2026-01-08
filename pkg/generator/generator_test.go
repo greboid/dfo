@@ -907,7 +907,7 @@ func TestGenerateStage(t *testing.T) {
 			isFinal: false,
 			contains: []string{
 				"FROM",
-				"@sha256:",
+				":latest",
 				"AS builder",
 			},
 			notContains: []string{
@@ -925,7 +925,7 @@ func TestGenerateStage(t *testing.T) {
 			isFinal: true,
 			contains: []string{
 				"FROM",
-				"@sha256:",
+				":latest",
 				`LABEL version="1.0"`,
 			},
 			notContains: []string{
@@ -1519,7 +1519,6 @@ func TestGenerateWithBOM(t *testing.T) {
 			contains: []string{
 				"# BOM:",
 				`"apk:git":`,
-				`"image:alpine":`,
 			},
 		},
 		{
@@ -1544,7 +1543,6 @@ func TestGenerateWithBOM(t *testing.T) {
 				`"apk:git":`,
 				`"apk:ca-certificates":`,
 				`"apk:curl":`,
-				`"image:alpine":`,
 			},
 		},
 		{
@@ -1572,7 +1570,6 @@ func TestGenerateWithBOM(t *testing.T) {
 				"# BOM:",
 				`"apk:make":`,
 				`"apk:gcc":`,
-				`"image:alpine":`,
 			},
 		},
 	}
@@ -1650,13 +1647,12 @@ func TestBOMSortedOutput(t *testing.T) {
 	gitIndex := strings.Index(bomLine, `"apk:git"`)
 	muslIndex := strings.Index(bomLine, `"apk:musl"`)
 	zlibIndex := strings.Index(bomLine, `"apk:zlib"`)
-	alpineIndex := strings.Index(bomLine, `"image:alpine"`)
 
-	if caIndex == -1 || gitIndex == -1 || muslIndex == -1 || zlibIndex == -1 || alpineIndex == -1 {
+	if caIndex == -1 || gitIndex == -1 || muslIndex == -1 || zlibIndex == -1 {
 		t.Fatal("not all expected entries found in BOM")
 	}
 
-	if !(caIndex < gitIndex && gitIndex < muslIndex && muslIndex < zlibIndex && zlibIndex < alpineIndex) {
+	if !(caIndex < gitIndex && gitIndex < muslIndex && muslIndex < zlibIndex) {
 		t.Error("BOM entries are not in sorted order")
 	}
 }
@@ -1718,8 +1714,6 @@ func TestBOMWithMultiStage(t *testing.T) {
 		"# BOM:",
 		`"apk:git":`,
 		`"apk:ca-certificates":`,
-		`"image:alpine":`,
-		`"image:golang":`,
 	}
 
 	for _, substr := range expectedContains {

@@ -39,6 +39,10 @@ func NewResolver(registry string, checkLocal bool) *Resolver {
 	}
 }
 
+func (r *Resolver) GetRegistry() string {
+	return r.registry
+}
+
 func (r *Resolver) Resolve(ctx context.Context, imageName string) (*ResolvedImage, error) {
 	ref, err := r.parseImageReference(imageName)
 	if err != nil {
