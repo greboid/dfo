@@ -81,7 +81,7 @@ func Generate(
 			Steps: []Step{
 				{
 					Name: "Checkout code",
-					Uses: "actions/checkout@v4",
+					Uses: "actions/checkout@v6",
 					With: map[string]string{
 						"token": "${{ secrets.GITHUB_TOKEN }}",
 					},
@@ -120,7 +120,7 @@ func Generate(
 			Steps: []Step{
 				{
 					Name: "Checkout code",
-					Uses: "actions/checkout@v4",
+					Uses: "actions/checkout@v6",
 					With: map[string]string{
 						"token": "${{ secrets.GITHUB_TOKEN }}",
 					},
