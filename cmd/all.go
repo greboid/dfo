@@ -3,9 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"sync"
 
+	"github.com/greboid/dfo/pkg/config"
+	"github.com/greboid/dfo/pkg/graph"
 	"github.com/greboid/dfo/pkg/images"
 	"github.com/greboid/dfo/pkg/processor"
 	"github.com/greboid/dfo/pkg/util"
@@ -42,6 +44,59 @@ func runAll(_ *cobra.Command, _ []string) error {
 
 	fs := util.DefaultFS()
 
+	absDir, err := filepath.Abs(allDirectory)
+	if err != nil {
+		return fmt.Errorf("resolving directory path: %w", err)
+	}
+
+	// Find all config files
+	configFiles, err := processor.FindConfigFiles(fs, absDir)
+	if err != nil {
+		return fmt.Errorf("finding config files: %w", err)
+	}
+
+	if len(configFiles) == 0 {
+		fmt.Println("No dfo.yaml files found.")
+		return nil
+	}
+
+	fmt.Printf("Found %d dfo.yaml file(s)\n", len(configFiles))
+
+	// Load all configs and build dependency graph
+	configs := make(map[string]*config.BuildConfig)
+	containerPaths := make(map[string]string)
+
+	for _, configPath := range configFiles {
+		cfg, err := config.Load(fs, configPath)
+		if err != nil {
+			return fmt.Errorf("loading %s: %w", configPath, err)
+		}
+
+		containerName := filepath.Base(filepath.Dir(configPath))
+		configs[containerName] = cfg
+		containerPaths[containerName] = configPath
+	}
+
+	fmt.Println("Building dependency graph...")
+	depGraph, err := graph.Build(configs, containerPaths)
+	if err != nil {
+		return fmt.Errorf("building dependency graph: %w", err)
+	}
+
+	fmt.Printf("Graph contains %d container(s)\n", len(depGraph.Containers))
+
+	fmt.Println("Resolving build order...")
+	layers, err := depGraph.TopologicalSort()
+	if err != nil {
+		return fmt.Errorf("resolving dependencies: %w", err)
+	}
+
+	fmt.Printf("Resolved into %d layer(s):\n", len(layers))
+	for i, layer := range layers {
+		fmt.Printf("  Layer %d: %v\n", i, layer)
+	}
+
+	// Resolve Alpine version
 	resolvedVersion := allAlpineVersion
 	if resolvedVersion == "" {
 		latest, err := alpineClient.GetLatestStableVersion()
@@ -54,40 +109,66 @@ func runAll(_ *cobra.Command, _ []string) error {
 
 	sharedImageResolver := images.NewResolver(allRegistry, true)
 
-	var outputMu sync.Mutex
+	// Process layers in order
+	fmt.Println("\nGenerating Containerfiles in dependency order...")
+	totalProcessed := 0
+	totalErrors := 0
 
-	fileProcessor := func(configPath string) error {
-		result, err := processor.ProcessConfigInPlace(fs, configPath, alpineClient, resolvedVersion, allGitUser, allGitPass, allRegistry, sharedImageResolver)
-		if err != nil {
-			return err
+	for layerIdx, layer := range layers {
+		fmt.Printf("\nProcessing layer %d: %v\n", layerIdx, layer)
+
+		// Process this layer (can be done in parallel within the layer)
+		var layerMu sync.Mutex
+		var layerWg sync.WaitGroup
+		const maxConcurrency = 5
+		semaphore := make(chan struct{}, maxConcurrency)
+
+		for _, containerName := range layer {
+			layerWg.Add(1)
+			go func(cName string) {
+				defer layerWg.Done()
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+
+				container := depGraph.Containers[cName]
+				configPath := container.ConfigPath
+
+				result, err := processor.ProcessConfigInPlace(
+					fs,
+					configPath,
+					alpineClient,
+					resolvedVersion,
+					allGitUser,
+					allGitPass,
+					allRegistry,
+					sharedImageResolver,
+				)
+
+				layerMu.Lock()
+				defer layerMu.Unlock()
+
+				if err != nil {
+					totalErrors++
+					fmt.Fprintf(os.Stderr, "✗ %s: %v\n", cName, err)
+				} else {
+					totalProcessed++
+					fmt.Printf("✓ %s\n", result.PackageName)
+				}
+			}(containerName)
 		}
-		outputMu.Lock()
-		fmt.Printf("✓ %s\n", result.PackageName)
-		outputMu.Unlock()
-		return nil
+
+		layerWg.Wait()
 	}
 
-	result, err := processor.WalkAndProcess(fs, allDirectory, fileProcessor)
-	if err != nil {
-		return err
-	}
-
-	for _, pe := range result.ErrorDetails {
-		_, _ = fmt.Fprintf(os.Stderr, "✗ %s: %v\n", path.Base(path.Dir(pe.Path)), pe.Err)
-	}
-
-	fmt.Printf("Summary: %d file(s) processed", result.Processed)
-	if result.Errors > 0 {
-		fmt.Printf(", %d error(s)", result.Errors)
+	// Print summary
+	fmt.Printf("\nSummary: %d file(s) processed", totalProcessed)
+	if totalErrors > 0 {
+		fmt.Printf(", %d error(s)", totalErrors)
 	}
 	fmt.Println()
 
-	if result.Processed == 0 {
-		fmt.Println("\nNo dfo.yaml files found.")
-	}
-
-	if result.Errors > 0 {
-		return fmt.Errorf("%d file(s) failed to process", result.Errors)
+	if totalErrors > 0 {
+		return fmt.Errorf("%d file(s) failed to process", totalErrors)
 	}
 
 	return nil
