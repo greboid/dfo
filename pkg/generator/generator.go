@@ -465,7 +465,8 @@ func (g *Generator) appendPackageSections(env config.Environment, b *strings.Bui
 		b.WriteString("\n")
 	}
 	if len(env.RootfsPackages) > 0 {
-		b.WriteString(g.generateRootfsPackageInstallForEnv(env))
+		content := g.generateRootfsPackageInstallForEnv(env)
+		b.WriteString(g.wrapWithBuildDeps(content, []string{"busybox", "rsync"}, "rootfs-packages"))
 		b.WriteString("\n")
 	}
 	return nil
