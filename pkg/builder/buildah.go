@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/greboid/dfo/pkg/util"
 )
 
 type BuildahBuilder struct {
@@ -38,13 +40,10 @@ func (b *BuildahBuilder) Initialize(ctx context.Context) error {
 }
 
 func (b *BuildahBuilder) BuildContainer(ctx context.Context, containerName, containerfilePath, contextDir string) (*BuildResult, error) {
-	imageName := containerName
-	if b.registry != "" {
-		imageName = fmt.Sprintf("%s/%s:latest", b.registry, containerName)
-	}
+	imageName := b.buildImageName(containerName)
 
-	if _, err := os.Stat(containerfilePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("Containerfile not found: %s", containerfilePath)
+	if err := b.validateContainerfilePath(containerfilePath); err != nil {
+		return nil, err
 	}
 
 	slog.Debug("Building container",
@@ -54,6 +53,53 @@ func (b *BuildahBuilder) BuildContainer(ctx context.Context, containerName, cont
 		"context", contextDir,
 	)
 
+	imageID, err := b.executeBuild(ctx, imageName, containerfilePath, contextDir)
+	if err != nil {
+		return nil, err
+	}
+
+	digest, err := b.getImageDigest(ctx, imageID, containerName)
+	if err != nil {
+		slog.Warn("Failed to get digest, using image ID",
+			"container", containerName,
+			"image_id", imageID,
+			"error", err,
+		)
+		digest = util.NormalizeDigest(imageID)
+	}
+
+	return b.createBuildResult(containerName, imageName, digest), nil
+}
+
+func (b *BuildahBuilder) buildImageName(containerName string) string {
+	if b.registry != "" {
+		return fmt.Sprintf("%s/%s:latest", b.registry, containerName)
+	}
+	return containerName
+}
+
+func (b *BuildahBuilder) validateContainerfilePath(containerfilePath string) error {
+	if _, err := os.Stat(containerfilePath); os.IsNotExist(err) {
+		return fmt.Errorf("containerfile not found: %s", containerfilePath)
+	}
+	return nil
+}
+
+func (b *BuildahBuilder) executeBuild(ctx context.Context, imageName, containerfilePath, contextDir string) (string, error) {
+	args := b.buildBuildArgs(imageName, containerfilePath, contextDir)
+
+	cmd := exec.CommandContext(ctx, "buildah", args...)
+	cmd.Dir = contextDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("building container: %w\nOutput:\n%s", err, string(output))
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	return strings.TrimSpace(lines[len(lines)-1]), nil
+}
+
+func (b *BuildahBuilder) buildBuildArgs(imageName, containerfilePath, contextDir string) []string {
 	args := []string{
 		"build",
 		"--layers",
@@ -62,6 +108,15 @@ func (b *BuildahBuilder) BuildContainer(ctx context.Context, containerName, cont
 		"-t", imageName,
 		"-f", containerfilePath,
 	}
+
+	args = append(args, b.buildStorageArgs()...)
+	args = append(args, contextDir)
+
+	return args
+}
+
+func (b *BuildahBuilder) buildStorageArgs() []string {
+	var args []string
 
 	if b.isolation != "" {
 		args = append(args, "--isolation", b.isolation)
@@ -74,64 +129,37 @@ func (b *BuildahBuilder) BuildContainer(ctx context.Context, containerName, cont
 		args = append(args, "--runroot", filepath.Join(b.storagePath, "run"))
 	}
 
-	args = append(args, contextDir)
+	return args
+}
 
-	cmd := exec.CommandContext(ctx, "buildah", args...)
-	cmd.Dir = contextDir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("building container: %w\nOutput:\n%s", err, string(output))
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	imageID := strings.TrimSpace(lines[len(lines)-1])
-
-	inspectArgs := []string{"inspect", "--format", "{{.FromImageDigest}}", imageID}
-	if b.storageDriver != "" {
-		inspectArgs = append([]string{"--storage-driver", b.storageDriver}, inspectArgs[0:]...)
-	}
-	if b.storagePath != "" {
-		inspectArgs = append([]string{"--root", filepath.Join(b.storagePath, "storage"), "--runroot", filepath.Join(b.storagePath, "run")}, inspectArgs[0:]...)
-	}
+func (b *BuildahBuilder) getImageDigest(ctx context.Context, imageID, containerName string) (string, error) {
+	inspectArgs := b.buildInspectArgs(imageID)
 
 	inspectCmd := exec.CommandContext(ctx, "buildah", inspectArgs...)
 	digestOutput, err := inspectCmd.CombinedOutput()
 	if err != nil {
-		slog.Warn("Failed to get digest, using image ID",
-			"container", containerName,
-			"image_id", imageID,
-			"error", err,
-		)
-		digest := imageID
-		if !strings.HasPrefix(digest, "sha256:") {
-			digest = "sha256:" + digest
-		}
-
-		return &BuildResult{
-			ContainerName: containerName,
-			ImageName:     imageName,
-			Digest:        digest,
-			FullRef:       fmt.Sprintf("%s@%s", imageName, digest),
-			Size:          0,
-		}, nil
+		return "", err
 	}
 
 	digest := strings.TrimSpace(string(digestOutput))
 	if digest == "" || digest == "<none>" {
-		digest = imageID
+		return imageID, nil
 	}
 
-	if !strings.HasPrefix(digest, "sha256:") {
-		digest = "sha256:" + digest
-	}
+	return util.NormalizeDigest(digest), nil
+}
 
-	fullRef := fmt.Sprintf("%s@%s", imageName, digest)
+func (b *BuildahBuilder) buildInspectArgs(imageID string) []string {
+	args := []string{"inspect", "--format", "{{.FromImageDigest}}", imageID}
+	return append(b.buildStorageArgs(), args...)
+}
 
+func (b *BuildahBuilder) createBuildResult(containerName, imageName, digest string) *BuildResult {
 	result := &BuildResult{
 		ContainerName: containerName,
 		ImageName:     imageName,
 		Digest:        digest,
-		FullRef:       fullRef,
+		FullRef:       util.FormatFullRef(imageName, digest),
 		Size:          0,
 	}
 
@@ -140,7 +168,7 @@ func (b *BuildahBuilder) BuildContainer(ctx context.Context, containerName, cont
 		"digest", digest[:min(16, len(digest))],
 	)
 
-	return result, nil
+	return result
 }
 
 func (b *BuildahBuilder) PushImage(ctx context.Context, imageName string) error {

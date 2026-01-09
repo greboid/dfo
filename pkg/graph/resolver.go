@@ -56,8 +56,8 @@ func (g *Graph) findCycle(processed map[string]bool) []string {
 	recStack := make(map[string]bool)
 	parent := make(map[string]string)
 
-	var dfs func(string) *string
-	dfs = func(node string) *string {
+	var dfs func(node string) string
+	dfs = func(node string) string {
 		visited[node] = true
 		recStack[node] = true
 
@@ -69,36 +69,41 @@ func (g *Graph) findCycle(processed map[string]bool) []string {
 
 			if !visited[dep] {
 				parent[dep] = node
-				if cycleStart := dfs(dep); cycleStart != nil {
+				if cycleStart := dfs(dep); cycleStart != "" {
 					return cycleStart
 				}
 			} else if recStack[dep] {
 				parent[dep] = node
-				return &dep
+				return dep
 			}
 		}
 
 		recStack[node] = false
-		return nil
+		return ""
 	}
 
 	for name := range g.Containers {
-		if processed[name] {
+		if processed[name] || visited[name] {
 			continue
 		}
-		if !visited[name] {
-			if cycleStart := dfs(name); cycleStart != nil {
-				cycle := []string{*cycleStart}
-				current := parent[*cycleStart]
-				for current != *cycleStart {
-					cycle = append([]string{current}, cycle...)
-					current = parent[current]
-				}
-				cycle = append(cycle, *cycleStart)
-				return cycle
-			}
+
+		if cycleStart := dfs(name); cycleStart != "" {
+			return g.buildCyclePath(cycleStart, parent)
 		}
 	}
 
 	return []string{"unknown cycle"}
+}
+
+func (g *Graph) buildCyclePath(start string, parent map[string]string) []string {
+	path := []string{start}
+	current := parent[start]
+
+	for current != start {
+		path = append([]string{current}, path...)
+		current = parent[current]
+	}
+
+	path = append(path, start)
+	return path
 }

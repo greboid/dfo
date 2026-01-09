@@ -1,33 +1,17 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 
-	"github.com/greboid/dfo/pkg/builder"
-	"github.com/greboid/dfo/pkg/config"
-	"github.com/greboid/dfo/pkg/graph"
-	"github.com/greboid/dfo/pkg/processor"
-	"github.com/greboid/dfo/pkg/util"
 	"github.com/greboid/dfo/pkg/workflow"
 	"github.com/spf13/cobra"
 )
 
 var (
-	orchestrateDirectory     string
-	orchestrateOutput        string
-	orchestrateAlpineVersion string
-	orchestrateGitUser       string
-	orchestrateGitPass       string
-	orchestrateRegistry      string
-	orchestrateStoragePath   string
-	orchestrateStorageDriver string
-	orchestrateIsolation     string
-	orchestrateConcurrency   int
-	orchestrateForceRebuild  bool
-	orchestratePush          bool
-	orchestrateWorkflowOnly  bool
+	orchestrateOutput       string
+	orchestrateWorkflowOnly bool
+	orchestrateConfig       BuildConfig
 )
 
 var orchestrateCmd = &cobra.Command{
@@ -50,7 +34,7 @@ func init() {
 	rootCmd.AddCommand(orchestrateCmd)
 
 	orchestrateCmd.Flags().StringVarP(
-		&orchestrateDirectory,
+		&orchestrateConfig.Directory,
 		"directory",
 		"d",
 		".",
@@ -65,61 +49,61 @@ func init() {
 	)
 
 	orchestrateCmd.Flags().BoolVar(
-		&orchestrateForceRebuild,
+		&orchestrateConfig.ForceRebuild,
 		"force-rebuild",
 		false,
 		"Force rebuild all containers, ignoring build cache",
 	)
 	orchestrateCmd.Flags().BoolVar(
-		&orchestratePush,
+		&orchestrateConfig.Push,
 		"push",
 		false,
 		"Push built images to registry after successful build",
 	)
 	orchestrateCmd.Flags().StringVar(
-		&orchestrateAlpineVersion,
+		&orchestrateConfig.AlpineVersion,
 		"alpine-version",
 		"",
 		"Alpine version for package resolution (auto-detected if not specified)",
 	)
 	orchestrateCmd.Flags().StringVar(
-		&orchestrateGitUser,
+		&orchestrateConfig.GitUser,
 		"git-user",
 		"",
 		"Git username for private repository access",
 	)
 	orchestrateCmd.Flags().StringVar(
-		&orchestrateGitPass,
+		&orchestrateConfig.GitPass,
 		"git-pass",
 		"",
 		"Git password/token for private repository access",
 	)
 	orchestrateCmd.Flags().StringVar(
-		&orchestrateRegistry,
+		&orchestrateConfig.Registry,
 		"registry",
 		"",
 		"Container registry for image naming (e.g., ghcr.io/username)",
 	)
 	orchestrateCmd.Flags().StringVar(
-		&orchestrateStoragePath,
+		&orchestrateConfig.StoragePath,
 		"storage-path",
 		"",
 		"Custom buildah storage path (default: system default, useful for rootless)",
 	)
 	orchestrateCmd.Flags().StringVar(
-		&orchestrateStorageDriver,
+		&orchestrateConfig.StorageDriver,
 		"storage-driver",
 		"",
 		"Buildah storage driver (overlay, vfs, etc. - auto-detects with vfs fallback if not specified)",
 	)
 	orchestrateCmd.Flags().StringVar(
-		&orchestrateIsolation,
+		&orchestrateConfig.Isolation,
 		"isolation",
 		"",
 		"Buildah isolation mode (chroot, oci, rootless - default: auto-detect). Use 'chroot' for simpler rootless environments (disables networking during build)",
 	)
 	orchestrateCmd.Flags().IntVar(
-		&orchestrateConcurrency,
+		&orchestrateConfig.Concurrency,
 		"concurrency",
 		5,
 		"Maximum parallel builds per layer",
@@ -133,11 +117,7 @@ func init() {
 }
 
 func runOrchestrate(_ *cobra.Command, _ []string) error {
-	fmt.Printf("Searching for dfo.yaml files in %s...\n", orchestrateDirectory)
-
-	fs := util.DefaultFS()
-
-	absDir, err := filepath.Abs(orchestrateDirectory)
+	absDir, err := filepath.Abs(orchestrateConfig.Directory)
 	if err != nil {
 		return fmt.Errorf("resolving directory path: %w", err)
 	}
@@ -146,120 +126,23 @@ func runOrchestrate(_ *cobra.Command, _ []string) error {
 		orchestrateOutput = filepath.Join(absDir, ".github", "workflows", "update-containers.yml")
 	}
 
-	configFiles, err := processor.FindConfigFiles(fs, absDir)
+	graphResult, err := loadConfigsAndBuildGraph(&orchestrateConfig)
 	if err != nil {
-		return fmt.Errorf("finding config files: %w", err)
-	}
-
-	if len(configFiles) == 0 {
-		return fmt.Errorf("no dfo.yaml files found in %s", absDir)
-	}
-
-	fmt.Printf("Found %d dfo.yaml file(s)\n", len(configFiles))
-
-	configs := make(map[string]*config.BuildConfig)
-	containerPaths := make(map[string]string)
-
-	for _, configPath := range configFiles {
-		cfg, err := config.Load(fs, configPath)
-		if err != nil {
-			return fmt.Errorf("loading %s: %w", configPath, err)
-		}
-
-		containerName := filepath.Base(filepath.Dir(configPath))
-
-		configs[containerName] = cfg
-		containerPaths[containerName] = configPath
-	}
-
-	fmt.Println("Building dependency graph...")
-	depGraph, err := graph.Build(configs, containerPaths)
-	if err != nil {
-		return fmt.Errorf("building dependency graph: %w", err)
-	}
-
-	fmt.Printf("Graph contains %d container(s)\n", len(depGraph.Containers))
-
-	fmt.Println("Resolving build order...")
-	layers, err := depGraph.TopologicalSort()
-	if err != nil {
-		return fmt.Errorf("resolving dependencies: %w", err)
-	}
-
-	fmt.Printf("Resolved into %d layer(s):\n", len(layers))
-	for i, layer := range layers {
-		fmt.Printf("  Layer %d: %v\n", i, layer)
+		return err
 	}
 
 	if !orchestrateWorkflowOnly {
-		fmt.Println("\nBuilding containers with buildah...")
-		if err := buildContainers(depGraph, layers); err != nil {
+		if err := buildContainers(&orchestrateConfig, graphResult); err != nil {
 			return fmt.Errorf("building containers: %w", err)
 		}
 		fmt.Println()
 	}
 
 	fmt.Printf("Generating workflow to %s...\n", orchestrateOutput)
-	if err := workflow.Generate(depGraph, layers, orchestrateOutput); err != nil {
+	if err := workflow.Generate(graphResult.Graph, graphResult.Layers, orchestrateOutput); err != nil {
 		return fmt.Errorf("generating workflow: %w", err)
 	}
 
 	fmt.Println("Workflow generated successfully!")
-	return nil
-}
-
-func buildContainers(depGraph *graph.Graph, layers [][]string) error {
-	fs := util.DefaultFS()
-
-	resolvedVersion := orchestrateAlpineVersion
-	if resolvedVersion == "" {
-		latest, err := alpineClient.GetLatestStableVersion()
-		if err != nil {
-			return fmt.Errorf("failed to detect latest Alpine version: %w", err)
-		}
-		resolvedVersion = latest
-		fmt.Printf("Auto-detected Alpine version: %s\n", resolvedVersion)
-	}
-
-	buildConfig := builder.OrchestratorConfig{
-		AlpineVersion: resolvedVersion,
-		GitUser:       orchestrateGitUser,
-		GitPass:       orchestrateGitPass,
-		Registry:      orchestrateRegistry,
-		OutputDir:     orchestrateDirectory,
-		Concurrency:   orchestrateConcurrency,
-		AlpineClient:  alpineClient,
-		ForceRebuild:  orchestrateForceRebuild,
-		Push:          orchestratePush,
-	}
-
-	buildahBuilder := builder.NewBuildahBuilder(orchestrateRegistry, orchestrateStoragePath, orchestrateStorageDriver, orchestrateIsolation)
-
-	orch, err := builder.NewOrchestrator(
-		buildahBuilder,
-		depGraph,
-		fs,
-		buildConfig,
-	)
-	if err != nil {
-		return fmt.Errorf("creating orchestrator: %w", err)
-	}
-
-	defer func() {
-		if closeErr := orch.Close(); closeErr != nil {
-			fmt.Printf("Warning: failed to close builder: %v\n", closeErr)
-		}
-	}()
-
-	ctx := context.Background()
-
-	if err = orch.Initialize(ctx); err != nil {
-		return fmt.Errorf("initializing builder: %w", err)
-	}
-
-	if err = orch.BuildLayers(ctx, layers); err != nil {
-		return fmt.Errorf("building layers: %w", err)
-	}
-
 	return nil
 }

@@ -15,12 +15,21 @@ func Generate(
 	layers [][]string,
 	outputPath string,
 ) error {
-	workflow := &Workflow{
+	workflow := createWorkflowSkeleton()
+
+	addSetupCacheJob(workflow)
+	addContainerBuildJobs(workflow, depGraph, layers)
+	addUpdateJobs(workflow, layers)
+	addCommitJob(workflow, layers)
+
+	return writeWorkflowFile(workflow, outputPath)
+}
+
+func createWorkflowSkeleton() *Workflow {
+	return &Workflow{
 		Name:        "Update Containers",
 		Concurrency: "dockerfiles",
-		Permissions: map[string]string{
-			"contents": "write",
-		},
+		Permissions: map[string]string{"contents": "write"},
 		On: Triggers{
 			WorkflowDispatch: &DispatchTrigger{},
 			WorkflowRun: &RunTrigger{
@@ -30,123 +39,88 @@ func Generate(
 		},
 		Jobs: make(map[string]Job),
 	}
+}
 
+func addSetupCacheJob(workflow *Workflow) {
 	workflow.Jobs["setup-cache"] = Job{
 		Name:   "Setup cache",
 		RunsOn: "ubuntu-latest",
 		Steps: []Step{
-			{
-				Name: "Setup Go",
-				Uses: "actions/setup-go@v6",
-				With: map[string]string{
-					"go-version": "stable",
-					"cache":      "false",
-				},
-			},
-			{
-				Name: "Install latest dfo",
-				Uses: "mattdowdell/go-installer@v0.3.0",
-				With: map[string]string{
-					"package": "github.com/greboid/dfo",
-				},
-			},
+			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
+			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
 		},
 	}
+}
 
+func addContainerBuildJobs(workflow *Workflow, depGraph *graph.Graph, layers [][]string) {
 	var previousUpdateJob string
 
 	for layerIdx, layer := range layers {
 		for _, containerName := range layer {
 			needs := buildNeedsArray(depGraph, containerName, previousUpdateJob)
-
-			workflow.Jobs[containerName] = Job{
-				Name:    fmt.Sprintf("Build %s", containerName),
-				Needs:   needs,
-				Uses:    "./.github/workflows/container-builder.yml",
-				Secrets: "inherit",
-				With: map[string]string{
-					"PROJECT_NAME": containerName,
-				},
-			}
+			workflow.Jobs[containerName] = createContainerBuildJob(containerName, needs)
 		}
+		previousUpdateJob = fmt.Sprintf("update-layer-%d", layerIdx)
+	}
+}
 
+func createContainerBuildJob(containerName string, needs []string) Job {
+	return Job{
+		Name:   fmt.Sprintf("Build %s", containerName),
+		Needs:  needs,
+		RunsOn: "ubuntu-latest",
+		Steps: []Step{
+			{Name: "Checkout code", Uses: "actions/checkout@v6"},
+			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
+			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
+			{Name: fmt.Sprintf("Build %s", containerName), Run: fmt.Sprintf("dfo single --build --registry \"${{ secrets.REGISTRY }}\" %s", containerName)},
+		},
+	}
+}
+
+func addUpdateJobs(workflow *Workflow, layers [][]string) {
+	for layerIdx, layer := range layers {
 		updateJobName := fmt.Sprintf("update-layer-%d", layerIdx)
-		updateNeeds := []string{"setup-cache"}
-		updateNeeds = append(updateNeeds, layer...)
+		updateNeeds := append([]string{"setup-cache"}, layer...)
+		workflow.Jobs[updateJobName] = createUpdateJob(layerIdx, updateNeeds, layer)
+	}
+}
 
-		workflow.Jobs[updateJobName] = Job{
-			Name:   fmt.Sprintf("Update layer %d tags", layerIdx),
-			Needs:  updateNeeds,
-			RunsOn: "ubuntu-latest",
-			Steps: []Step{
-				{
-					Name: "Checkout code",
-					Uses: "actions/checkout@v6",
-					With: map[string]string{
-						"token": "${{ secrets.GITHUB_TOKEN }}",
-					},
-				},
-				{
-					Name: "Setup Go",
-					Uses: "actions/setup-go@v6",
-					With: map[string]string{
-						"go-version": "stable",
-						"cache":      "false",
-					},
-				},
-				{
-					Name: "Install latest dfo",
-					Uses: "mattdowdell/go-installer@v0.3.0",
-					With: map[string]string{
-						"package": "github.com/greboid/dfo",
-					},
-				},
-				{
-					Name: fmt.Sprintf("Update layer %d Containerfiles", layerIdx),
-					Run:  buildUpdateScript(layer),
-				},
-			},
-		}
+func createUpdateJob(layerIdx int, needs []string, layer []string) Job {
+	return Job{
+		Name:   fmt.Sprintf("Update layer %d tags", layerIdx),
+		Needs:  needs,
+		RunsOn: "ubuntu-latest",
+		Steps: []Step{
+			{Name: "Checkout code", Uses: "actions/checkout@v6", With: map[string]string{"token": "${{ secrets.GITHUB_TOKEN }}"}},
+			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
+			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
+			{Name: fmt.Sprintf("Update layer %d Containerfiles", layerIdx), Run: buildUpdateScript(layer)},
+		},
+	}
+}
 
-		previousUpdateJob = updateJobName
+func addCommitJob(workflow *Workflow, layers [][]string) {
+	if len(layers) == 0 {
+		return
 	}
 
-	if len(layers) > 0 {
-		commitNeeds := []string{fmt.Sprintf("update-layer-%d", len(layers)-1)}
-		workflow.Jobs["commit-changes"] = Job{
-			Name:   "Commit updated files",
-			Needs:  commitNeeds,
-			RunsOn: "ubuntu-latest",
-			Steps: []Step{
-				{
-					Name: "Checkout code",
-					Uses: "actions/checkout@v6",
-					With: map[string]string{
-						"token": "${{ secrets.GITHUB_TOKEN }}",
-					},
-				},
-				{
-					Name: "Setup Go",
-					Uses: "actions/setup-go@v6",
-					With: map[string]string{
-						"go-version": "stable",
-						"cache":      "false",
-					},
-				},
-				{
-					Name: "Install latest dfo",
-					Uses: "mattdowdell/go-installer@v0.3.0",
-					With: map[string]string{
-						"package": "github.com/greboid/dfo",
-					},
-				},
-				{
-					Name: "Update all Containerfiles with built image digests",
-					Run:  buildFinalUpdateScript(layers),
-				},
-				{
-					Name: "Commit and push changes",
-					Run: `git config user.name "github-actions[bot]"
+	workflow.Jobs["commit-changes"] = Job{
+		Name:   "Commit updated files",
+		Needs:  []string{fmt.Sprintf("update-layer-%d", len(layers)-1)},
+		RunsOn: "ubuntu-latest",
+		Steps: []Step{
+			{Name: "Checkout code", Uses: "actions/checkout@v6", With: map[string]string{"token": "${{ secrets.GITHUB_TOKEN }}"}},
+			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
+			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
+			{Name: "Update all Containerfiles with built image digests", Run: buildFinalUpdateScript(layers)},
+			{Name: "Commit and push changes", Run: getCommitScript()},
+		},
+	}
+}
+
+func getCommitScript() string {
+	return `git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add .
 if git diff --staged --quiet; then
@@ -155,12 +129,10 @@ else
   git commit -m "Update Containerfiles and BOMs with built image digests"
   git pull --rebase origin $(git branch --show-current)
   git push
-fi`,
-				},
-			},
-		}
-	}
+fi`
+}
 
+func writeWorkflowFile(workflow *Workflow, outputPath string) error {
 	data, err := yaml.Marshal(workflow)
 	if err != nil {
 		return fmt.Errorf("marshaling workflow: %w", err)

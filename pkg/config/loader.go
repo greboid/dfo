@@ -51,45 +51,79 @@ func expandTemplates(config *BuildConfig) error {
 			continue
 		}
 
-		if !stage.Environment.IsEmpty() {
-			return fmt.Errorf("stage %d: cannot specify both 'template' and 'environment'", i)
-		}
-		if len(stage.Pipeline) > 0 {
-			return fmt.Errorf("stage %d: cannot specify both 'template' and 'pipeline'", i)
+		if err := validateTemplateUsage(stage, i); err != nil {
+			return err
 		}
 
-		if err := templates.ValidateTemplateParams(stage.Template, stage.With); err != nil {
-			return fmt.Errorf("stage %d with template %q: %w", i, stage.Template, err)
-		}
-
-		templateFunc, exists := templates.Registry[stage.Template]
-		if !exists {
-			return fmt.Errorf("stage %d: unknown template %q", i, stage.Template)
-		}
-
-		templateResult, err := templateFunc(stage.With)
+		templateResult, err := executeTemplate(stage, i)
 		if err != nil {
-			return fmt.Errorf("stage %d with template %q: %w", i, stage.Template, err)
+			return err
 		}
 
-		for j, stageResult := range templateResult.Stages {
-			newStage := convertStageResult(stageResult)
-
-			if stage.Name != "" && len(templateResult.Stages) == 1 {
-				newStage.Name = stage.Name
-			} else if newStage.Name == "" {
-				if len(templateResult.Stages) == 1 {
-					newStage.Name = fmt.Sprintf("%s-%d", stage.Template, i)
-				} else {
-					newStage.Name = fmt.Sprintf("%s-%d-%d", stage.Template, i, j)
-				}
-			}
-			expandedStages = append(expandedStages, newStage)
-		}
+		templateStages := convertAndNameTemplateStages(&templateResult, stage, i)
+		expandedStages = append(expandedStages, templateStages...)
 	}
 
 	config.Stages = expandedStages
 	return nil
+}
+
+func validateTemplateUsage(stage *Stage, index int) error {
+	if !stage.Environment.IsEmpty() {
+		return fmt.Errorf("stage %d: cannot specify both 'template' and 'environment'", index)
+	}
+	if len(stage.Pipeline) > 0 {
+		return fmt.Errorf("stage %d: cannot specify both 'template' and 'pipeline'", index)
+	}
+
+	if err := templates.ValidateTemplateParams(stage.Template, stage.With); err != nil {
+		return fmt.Errorf("stage %d with template %q: %w", index, stage.Template, err)
+	}
+
+	templateFunc, exists := templates.Registry[stage.Template]
+	if !exists {
+		return fmt.Errorf("stage %d: unknown template %q", index, stage.Template)
+	}
+
+	_ = templateFunc
+	return nil
+}
+
+func executeTemplate(stage *Stage, index int) (templates.TemplateResult, error) {
+	templateFunc, exists := templates.Registry[stage.Template]
+	if !exists {
+		return templates.TemplateResult{}, fmt.Errorf("stage %d: unknown template %q", index, stage.Template)
+	}
+
+	result, err := templateFunc(stage.With)
+	if err != nil {
+		return templates.TemplateResult{}, fmt.Errorf("stage %d with template %q: %w", index, stage.Template, err)
+	}
+
+	return result, nil
+}
+
+func convertAndNameTemplateStages(result *templates.TemplateResult, originalStage *Stage, originalIndex int) []Stage {
+	var stages []Stage
+
+	for j, stageResult := range result.Stages {
+		newStage := convertStageResult(stageResult)
+		newStage.Name = generateStageName(originalStage, originalIndex, j, len(result.Stages))
+		stages = append(stages, newStage)
+	}
+
+	return stages
+}
+
+func generateStageName(originalStage *Stage, originalIndex, resultIndex, totalResults int) string {
+	if originalStage.Name != "" && totalResults == 1 {
+		return originalStage.Name
+	}
+
+	if totalResults == 1 {
+		return fmt.Sprintf("%s-%d", originalStage.Template, originalIndex)
+	}
+	return fmt.Sprintf("%s-%d-%d", originalStage.Template, originalIndex, resultIndex)
 }
 
 func convertStageResult(stageResult templates.StageResult) Stage {

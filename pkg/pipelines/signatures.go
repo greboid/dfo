@@ -99,15 +99,19 @@ var Signatures = map[string]PipelineSignature{
 		Name:        "build-go-static",
 		Description: "Clone and build a statically linked Go binary",
 		Parameters: map[string]ParamSpec{
-			"repo":    {Type: TypeString, Required: true, Description: "Repository URL"},
-			"workdir": {Type: TypeString, Required: false, Description: "Working directory (default: /src)"},
-			"package": {Type: TypeString, Required: false, Description: "Go package to build (default: .)"},
-			"output":  {Type: TypeString, Required: false, Description: "Output binary path (default: /main)"},
-			"ignore":  {Type: TypeStringArray, Required: false, Description: "Packages to ignore for license generation"},
-			"tag":     {Type: TypeString, Required: false, Description: "Tag or branch to checkout"},
-			"go-tags": {Type: TypeString, Required: false, Description: "Additional Go build tags (default: netgo,osusergo)"},
-			"cgo":     {Type: TypeBool, Required: false, Description: "Enable CGO (default: true)"},
-			"patches": {Type: TypeStringArray, Required: false, Description: "Patch files to apply"},
+			"repo":          {Type: TypeString, Required: true, Description: "Repository URL"},
+			"workdir":       {Type: TypeString, Required: false, Description: "Working directory (default: /src)"},
+			"package":       {Type: TypeString, Required: false, Description: "Go package to build (default: .)"},
+			"output":        {Type: TypeString, Required: false, Description: "Output binary path (default: /main)"},
+			"ignore":        {Type: TypeStringArray, Required: false, Description: "Packages to ignore for license generation"},
+			"tag":           {Type: TypeString, Required: false, Description: "Tag or branch to checkout"},
+			"go-tags":       {Type: TypeString, Required: false, Description: "Additional Go build tags (default: netgo,osusergo)"},
+			"go-experiment": {Type: TypeString, Required: false, Description: "GOEXPERIMENT value for experimental features"},
+			"cgo":           {Type: TypeBool, Required: false, Description: "Enable CGO (default: true)"},
+			"patches":       {Type: TypeStringArray, Required: false, Description: "Patch files to apply"},
+			"packages":      {Type: TypeStringArray, Required: false, Description: "Additional Alpine packages to install"},
+			"go-generate":   {Type: TypeStringArray, Required: false, Description: "Paths to run go generate on (e.g., ./..., ./pkg/...)"},
+			"go-install":    {Type: TypeStringArray, Required: false, Description: "Go tools to install with versions (e.g., github.com/user/tool@v1.0.0)"},
 		},
 	},
 	"build-go-only": {
@@ -189,35 +193,57 @@ func ValidateParams(pipelineName string, params map[string]any) error {
 		return nil
 	}
 
+	if err := ValidateSignature(sig, params); err != nil {
+		return fmt.Errorf("pipeline %q: %w", pipelineName, err)
+	}
+	return nil
+}
+
+func ValidateSignature(sig PipelineSignature, params map[string]any) error {
 	var errors []string
 
+	errors = append(errors, validateRequiredParams(sig, params)...)
+	errors = append(errors, validateParamTypes(sig, params)...)
+	errors = append(errors, validateMutuallyExclusive(sig.MutuallyExclusive, params)...)
+	errors = append(errors, validateAtLeastOne(sig.AtLeastOne, params)...)
+
+	if len(errors) > 0 {
+		return fmt.Errorf("%s", strings.Join(errors, "; "))
+	}
+	return nil
+}
+
+func validateRequiredParams(sig PipelineSignature, params map[string]any) []string {
+	var errors []string
 	for paramName, spec := range sig.Parameters {
 		if spec.Required {
 			val, exists := params[paramName]
 			if !exists || val == nil {
 				errors = append(errors, fmt.Sprintf("required parameter %q is missing", paramName))
-				continue
-			}
-
-			if err := checkType(paramName, val, spec.Type); err != nil {
-				errors = append(errors, err.Error())
-			}
-		} else {
-			if val, exists := params[paramName]; exists && val != nil {
-				if err := checkType(paramName, val, spec.Type); err != nil {
-					errors = append(errors, err.Error())
-				}
 			}
 		}
 	}
+	return errors
+}
 
-	for _, group := range sig.MutuallyExclusive {
+func validateParamTypes(sig PipelineSignature, params map[string]any) []string {
+	var errors []string
+	for paramName, spec := range sig.Parameters {
+		if val, exists := params[paramName]; exists && val != nil {
+			if err := CheckType(paramName, val, spec.Type); err != nil {
+				errors = append(errors, err.Error())
+			}
+		}
+	}
+	return errors
+}
+
+func validateMutuallyExclusive(groups [][]string, params map[string]any) []string {
+	var errors []string
+	for _, group := range groups {
 		var present []string
 		for _, param := range group {
-			if val, exists := params[param]; exists && val != nil {
-				if str, ok := val.(string); ok && str == "" {
-					continue
-				}
+			if isParamPresent(params, param) {
 				present = append(present, param)
 			}
 		}
@@ -225,14 +251,15 @@ func ValidateParams(pipelineName string, params map[string]any) error {
 			errors = append(errors, fmt.Sprintf("cannot specify both %s", strings.Join(present, " and ")))
 		}
 	}
+	return errors
+}
 
-	for _, group := range sig.AtLeastOne {
+func validateAtLeastOne(groups [][]string, params map[string]any) []string {
+	var errors []string
+	for _, group := range groups {
 		hasAny := false
 		for _, param := range group {
-			if val, exists := params[param]; exists && val != nil {
-				if str, ok := val.(string); ok && str == "" {
-					continue
-				}
+			if isParamPresent(params, param) {
 				hasAny = true
 				break
 			}
@@ -241,58 +268,89 @@ func ValidateParams(pipelineName string, params map[string]any) error {
 			errors = append(errors, fmt.Sprintf("at least one of %s is required", strings.Join(group, ", ")))
 		}
 	}
+	return errors
+}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("pipeline %q: %s", pipelineName, strings.Join(errors, "; "))
+func isParamPresent(params map[string]any, param string) bool {
+	val, exists := params[param]
+	if !exists || val == nil {
+		return false
+	}
+	if str, ok := val.(string); ok && str == "" {
+		return false
+	}
+	return true
+}
+
+func CheckType(paramName string, value any, expectedType ParamType) error {
+	switch expectedType {
+	case TypeString:
+		return checkStringType(paramName, value)
+	case TypeInt:
+		return checkIntType(paramName, value)
+	case TypeBool:
+		return checkBoolType(paramName, value)
+	case TypeStringArray:
+		return checkStringArrayType(paramName, value)
+	case TypeObjectArray:
+		return checkObjectArrayType(paramName, value)
 	}
 	return nil
 }
 
-func checkType(paramName string, value any, expectedType ParamType) error {
-	switch expectedType {
-	case TypeString:
-		if _, ok := value.(string); !ok {
-			return fmt.Errorf("parameter %q must be a string, got %T", paramName, value)
-		}
-	case TypeInt:
-		if _, ok := value.(float64); ok {
-			return nil
-		}
-		if _, ok := value.(int); ok {
-			return nil
-		}
-		return fmt.Errorf("parameter %q must be an integer, got %T", paramName, value)
-	case TypeBool:
-		if _, ok := value.(bool); !ok {
-			return fmt.Errorf("parameter %q must be a boolean, got %T", paramName, value)
-		}
-	case TypeStringArray:
-		switch v := value.(type) {
-		case string:
-			return nil
-		case []string:
-			return nil
-		case []any:
-			for i, item := range v {
-				if _, ok := item.(string); !ok {
-					return fmt.Errorf("parameter %q[%d] must be a string, got %T", paramName, i, item)
-				}
+func checkStringType(paramName string, value any) error {
+	if _, ok := value.(string); !ok {
+		return fmt.Errorf("parameter %q must be a string, got %T", paramName, value)
+	}
+	return nil
+}
+
+func checkIntType(paramName string, value any) error {
+	if _, ok := value.(float64); ok {
+		return nil
+	}
+	if _, ok := value.(int); ok {
+		return nil
+	}
+	return fmt.Errorf("parameter %q must be an integer, got %T", paramName, value)
+}
+
+func checkBoolType(paramName string, value any) error {
+	if _, ok := value.(bool); !ok {
+		return fmt.Errorf("parameter %q must be a boolean, got %T", paramName, value)
+	}
+	return nil
+}
+
+func checkStringArrayType(paramName string, value any) error {
+	switch v := value.(type) {
+	case string:
+		return nil
+	case []string:
+		return nil
+	case []any:
+		for i, item := range v {
+			if _, ok := item.(string); !ok {
+				return fmt.Errorf("parameter %q[%d] must be a string, got %T", paramName, i, item)
 			}
-		default:
-			return fmt.Errorf("parameter %q must be a string or array of strings, got %T", paramName, value)
 		}
-	case TypeObjectArray:
-		switch v := value.(type) {
-		case []any:
-			for i, item := range v {
-				if _, ok := item.(map[string]any); !ok {
-					return fmt.Errorf("parameter %q[%d] must be an object, got %T", paramName, i, item)
-				}
+	default:
+		return fmt.Errorf("parameter %q must be a string or array of strings, got %T", paramName, value)
+	}
+	return nil
+}
+
+func checkObjectArrayType(paramName string, value any) error {
+	switch v := value.(type) {
+	case []any:
+		for i, item := range v {
+			if _, ok := item.(map[string]any); !ok {
+				return fmt.Errorf("parameter %q[%d] must be an object, got %T", paramName, i, item)
 			}
-		case []map[string]any:
-		default:
-			return fmt.Errorf("parameter %q must be an array of objects, got %T", paramName, value)
 		}
+	case []map[string]any:
+	default:
+		return fmt.Errorf("parameter %q must be an array of objects, got %T", paramName, value)
 	}
 	return nil
 }

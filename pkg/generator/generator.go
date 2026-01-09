@@ -35,6 +35,7 @@ type Generator struct {
 	resolvedPackages map[string]string
 	resolvedImages   map[string]string
 	builtImages      map[string]string
+	localImageNames  map[string]bool
 	mu               sync.Mutex
 }
 
@@ -46,7 +47,7 @@ func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineCl
 	if sharedImageResolver != nil {
 		imageResolver = sharedImageResolver
 	} else {
-		imageResolver = images.NewResolver(registry, true)
+		imageResolver = images.NewResolver(registry, false)
 	}
 
 	return &Generator{
@@ -61,6 +62,7 @@ func New(cfg *config.BuildConfig, outputDir string, fs util.WritableFS, alpineCl
 		resolvedPackages: make(map[string]string),
 		resolvedImages:   make(map[string]string),
 		builtImages:      make(map[string]string),
+		localImageNames:  make(map[string]bool),
 	}
 }
 
@@ -81,6 +83,15 @@ func (g *Generator) SetBuiltImages(builtImages map[string]string) {
 
 	for imageName, digest := range builtImages {
 		g.builtImages[imageName] = digest
+	}
+}
+
+func (g *Generator) SetLocalImageNames(localNames []string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	for _, name := range localNames {
+		g.localImageNames[name] = true
 	}
 }
 
@@ -128,93 +139,101 @@ func (g *Generator) resolveVersions() error {
 }
 
 func (g *Generator) resolveImage(imageName string) (*images.ResolvedImage, error) {
+	if resolved, ok := g.tryGetBuiltImage(imageName); ok {
+		return resolved, nil
+	}
+
+	if resolved, ok := g.tryGetBuiltImageWithPrefix(imageName); ok {
+		return resolved, nil
+	}
+
+	if err := g.validateLocalImageStatus(imageName); err != nil {
+		return nil, err
+	}
+
+	return g.resolveExternalImage(imageName)
+}
+
+func (g *Generator) tryGetBuiltImage(imageName string) (*images.ResolvedImage, bool) {
 	g.mu.Lock()
-	if builtDigest, ok := g.builtImages[imageName]; ok {
-		g.mu.Unlock()
+	defer g.mu.Unlock()
 
-		fullRef := fmt.Sprintf("%s@%s", imageName, builtDigest)
-
-		slog.Debug("Using built image digest",
-			"image", imageName,
-			"digest", builtDigest[:min(16, len(builtDigest))],
-		)
-
-		return &images.ResolvedImage{
-			Name:    imageName,
-			Digest:  builtDigest,
-			FullRef: fullRef,
-		}, nil
+	builtDigest, ok := g.builtImages[imageName]
+	if !ok {
+		return nil, false
 	}
-	g.mu.Unlock()
 
-	registry := g.imageResolver.GetRegistry()
-	fullRef := imageName
-	if registry != "" && !strings.Contains(imageName, "/") {
-		fullRef = fmt.Sprintf("%s/%s:latest", registry, imageName)
-	} else if !strings.Contains(imageName, ":") {
-		fullRef = imageName + ":latest"
-	}
+	slog.Debug("Using built image digest",
+		"image", imageName,
+		"digest", builtDigest[:min(16, len(builtDigest))],
+	)
 
 	return &images.ResolvedImage{
 		Name:    imageName,
-		Digest:  "",
-		FullRef: fullRef,
-	}, nil
+		Digest:  builtDigest,
+		FullRef: util.FormatFullRef(imageName, builtDigest),
+	}, true
 }
 
-func (g *Generator) collectImageReferences() []string {
-	imageSet := make(map[string]bool)
-	var usedImages []string
-
-	for _, stage := range g.config.Stages {
-		if stage.Environment.BaseImage != "" && !imageSet[stage.Environment.BaseImage] {
-			imageSet[stage.Environment.BaseImage] = true
-			usedImages = append(usedImages, stage.Environment.BaseImage)
-		}
+func (g *Generator) tryGetBuiltImageWithPrefix(imageName string) (*images.ResolvedImage, bool) {
+	registry := g.imageResolver.GetRegistry()
+	if registry == "" || strings.Contains(imageName, "/") {
+		return nil, false
 	}
 
-	return usedImages
+	prefixedName := fmt.Sprintf("%s/%s", registry, imageName)
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	builtDigest, ok := g.builtImages[prefixedName]
+	if !ok {
+		return nil, false
+	}
+
+	slog.Debug("Using built image digest (with registry prefix)",
+		"image", prefixedName,
+		"digest", builtDigest[:min(16, len(builtDigest))],
+	)
+
+	return &images.ResolvedImage{
+		Name:    prefixedName,
+		Digest:  builtDigest,
+		FullRef: util.FormatFullRef(prefixedName, builtDigest),
+	}, true
 }
 
-func (g *Generator) resolveImagesInParallel() error {
-	imagesToResolve := g.collectImageReferences()
-	if len(imagesToResolve) == 0 {
-		return nil
+func (g *Generator) validateLocalImageStatus(imageName string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	registry := g.imageResolver.GetRegistry()
+	prefixedName := ""
+	if registry != "" && !strings.Contains(imageName, "/") {
+		prefixedName = fmt.Sprintf("%s/%s", registry, imageName)
 	}
 
-	const maxConcurrency = 10
-	type imageResult struct {
-		imageName string
-		err       error
+	isLocal := g.localImageNames[imageName]
+	if !isLocal && prefixedName != "" {
+		isLocal = g.localImageNames[prefixedName]
 	}
 
-	results := make(chan imageResult, len(imagesToResolve))
-	semaphore := make(chan struct{}, maxConcurrency)
-	var wg sync.WaitGroup
-
-	for _, imageName := range imagesToResolve {
-		wg.Go(func() {
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			_, err := g.resolveImage(imageName)
-			results <- imageResult{imageName: imageName, err: err}
-		})
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for result := range results {
-		if result.err != nil {
-			return fmt.Errorf("resolving image %q: %w", result.imageName, result.err)
-		}
-		slog.Debug("pre-resolved image", "image", result.imageName)
+	if isLocal {
+		return fmt.Errorf("local image %q has not been built yet - check build order", imageName)
 	}
 
 	return nil
+}
+
+func (g *Generator) resolveExternalImage(imageName string) (*images.ResolvedImage, error) {
+	slog.Debug("Resolving external image from registry", "image", imageName)
+
+	resolved, err := g.imageResolver.Resolve(context.Background(), imageName)
+	if err != nil {
+		return nil, fmt.Errorf("resolving external image %q from registry: %w", imageName, err)
+	}
+
+	return resolved, nil
 }
 
 func (g *Generator) buildVarsMap() map[string]string {
@@ -392,43 +411,78 @@ func (g *Generator) generateStageContent(env config.Environment, pipeline []conf
 	var b strings.Builder
 	b.Grow(1024)
 
-	if len(env.Args) > 0 {
-		for _, key := range util.SortedKeys(env.Args) {
-			b.WriteString(fmt.Sprintf("ARG %s=\"%s\"\n", key, env.Args[key]))
-		}
-		b.WriteString("\n")
+	b.WriteString(g.generateArgsSection(env))
+	b.WriteString(g.generateLabelsSection(env, isFinalStage))
+	b.WriteString(g.generateEnvSection(env))
+
+	if err := g.appendPackageSections(env, &b); err != nil {
+		return "", err
 	}
 
-	if len(g.config.Package.Labels) > 0 && isFinalStage {
-		b.WriteString(util.FormatMapDirectives("LABEL", g.config.Package.Labels))
+	b.WriteString(g.generateWorkDirSection(env))
+
+	if err := g.appendPipelineSections(pipeline, &b); err != nil {
+		return "", err
 	}
 
-	if len(env.Environment) > 0 {
-		b.WriteString(util.FormatMapDirectives("ENV", env.Environment))
-	}
+	b.WriteString(g.generateMetadataSections(env))
+	return b.String(), nil
+}
 
+func (g *Generator) generateArgsSection(env config.Environment) string {
+	if len(env.Args) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, key := range util.SortedKeys(env.Args) {
+		b.WriteString(fmt.Sprintf("ARG %s=\"%s\"\n", key, env.Args[key]))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (g *Generator) generateLabelsSection(env config.Environment, isFinalStage bool) string {
+	if len(g.config.Package.Labels) == 0 || !isFinalStage {
+		return ""
+	}
+	return util.FormatMapDirectives("LABEL", g.config.Package.Labels)
+}
+
+func (g *Generator) generateEnvSection(env config.Environment) string {
+	if len(env.Environment) == 0 {
+		return ""
+	}
+	return util.FormatMapDirectives("ENV", env.Environment)
+}
+
+func (g *Generator) appendPackageSections(env config.Environment, b *strings.Builder) error {
 	if len(env.Packages) > 0 {
 		pkgInstall, err := g.generatePackageInstallForEnv(env)
 		if err != nil {
-			return "", fmt.Errorf("generating package install: %w", err)
+			return err
 		}
 		b.WriteString(pkgInstall)
 		b.WriteString("\n")
 	}
-
 	if len(env.RootfsPackages) > 0 {
 		b.WriteString(g.generateRootfsPackageInstallForEnv(env))
 		b.WriteString("\n")
 	}
+	return nil
+}
 
-	if env.WorkDir != "" {
-		b.WriteString(fmt.Sprintf("WORKDIR %s\n\n", env.WorkDir))
+func (g *Generator) generateWorkDirSection(env config.Environment) string {
+	if env.WorkDir == "" {
+		return ""
 	}
+	return fmt.Sprintf("WORKDIR %s\n\n", env.WorkDir)
+}
 
+func (g *Generator) appendPipelineSections(pipeline []config.PipelineStep, b *strings.Builder) error {
 	for _, step := range pipeline {
 		stepContent, err := g.generatePipelineStep(step)
 		if err != nil {
-			return "", err
+			return err
 		}
 		if stepContent != "" {
 			if step.Name != "" {
@@ -438,6 +492,11 @@ func (g *Generator) generateStageContent(env config.Environment, pipeline []conf
 			b.WriteString("\n")
 		}
 	}
+	return nil
+}
+
+func (g *Generator) generateMetadataSections(env config.Environment) string {
+	var b strings.Builder
 
 	if len(env.Expose) > 0 {
 		for _, port := range env.Expose {
@@ -459,7 +518,7 @@ func (g *Generator) generateStageContent(env config.Environment, pipeline []conf
 	b.WriteString(util.FormatDockerfileArray("ENTRYPOINT", env.Entrypoint))
 	b.WriteString(util.FormatDockerfileArray("CMD", env.Cmd))
 
-	return b.String(), nil
+	return b.String()
 }
 
 func (g *Generator) generatePackageInstallForEnv(env config.Environment) (string, error) {
@@ -582,28 +641,18 @@ func (g *Generator) generateFetchStep(fetch *config.FetchStep) string {
 }
 
 func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error) {
-	pipeline, exists := pipelines.Registry[step.Uses]
-	if !exists {
-		return "", fmt.Errorf("pipeline %q not found (referenced in step %q)", step.Uses, step.Name)
+	pipeline, err := g.getPipeline(step.Uses, step.Name)
+	if err != nil {
+		return "", err
 	}
 
 	if err := pipelines.ValidateParams(step.Uses, step.With); err != nil {
 		return "", err
 	}
 
-	vars := g.buildVarsMap()
-
-	expandedWith := make(map[string]any)
-	for key, value := range step.With {
-		if strValue, ok := value.(string); ok {
-			expanded, err := util.ExpandVarsStrict(strValue, vars, "")
-			if err != nil {
-				return "", fmt.Errorf("variable %q not found in pipeline %q (step %q)", strValue, step.Uses, step.Name)
-			}
-			expandedWith[key] = expanded
-		} else {
-			expandedWith[key] = value
-		}
+	expandedWith, err := g.expandPipelineParams(step.With, step.Uses, step.Name)
+	if err != nil {
+		return "", err
 	}
 
 	result, err := pipeline(expandedWith)
@@ -611,8 +660,37 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 		return "", fmt.Errorf("executing pipeline %q: %w", step.Uses, err)
 	}
 
-	allBuildDeps := mergeDeps(result.BuildDeps, step.BuildDeps)
+	return g.formatPipelineResult(&result, step.BuildDeps, step.Uses), nil
+}
 
+func (g *Generator) getPipeline(pipelineName, stepName string) (pipelines.Pipeline, error) {
+	pipeline, exists := pipelines.Registry[pipelineName]
+	if !exists {
+		return nil, fmt.Errorf("pipeline %q not found (referenced in step %q)", pipelineName, stepName)
+	}
+	return pipeline, nil
+}
+
+func (g *Generator) expandPipelineParams(with map[string]any, pipelineName, stepName string) (map[string]any, error) {
+	vars := g.buildVarsMap()
+	expandedWith := make(map[string]any)
+
+	for key, value := range with {
+		if strValue, ok := value.(string); ok {
+			expanded, err := util.ExpandVarsStrict(strValue, vars, "")
+			if err != nil {
+				return nil, fmt.Errorf("variable %q not found in pipeline %q (step %q)", strValue, pipelineName, stepName)
+			}
+			expandedWith[key] = expanded
+		} else {
+			expandedWith[key] = value
+		}
+	}
+
+	return expandedWith, nil
+}
+
+func (g *Generator) formatPipelineResult(result *pipelines.PipelineResult, buildDeps []string, pipelineName string) string {
 	var stepsContent strings.Builder
 	for _, pipelineStep := range result.Steps {
 		if pipelineStep.Name != "" {
@@ -621,11 +699,12 @@ func (g *Generator) generateIncludeCall(step config.PipelineStep) (string, error
 		stepsContent.WriteString(pipelineStep.Content)
 	}
 
+	allBuildDeps := mergeDeps(result.BuildDeps, buildDeps)
 	if len(allBuildDeps) > 0 {
-		return g.wrapWithBuildDeps(stepsContent.String(), allBuildDeps, step.Uses), nil
+		return g.wrapWithBuildDeps(stepsContent.String(), allBuildDeps, pipelineName)
 	}
 
-	return stepsContent.String(), nil
+	return stepsContent.String()
 }
 
 func mergeDeps(a, b []string) []string {
@@ -713,6 +792,16 @@ func (g *Generator) generateBOM() string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	bom := g.collectBOMEntries()
+	if len(bom) == 0 {
+		return ""
+	}
+
+	sortedBOM := g.sortBOMKeys(bom)
+	return g.formatBOMAsComment(sortedBOM)
+}
+
+func (g *Generator) collectBOMEntries() map[string]string {
 	bom := make(map[string]string)
 
 	for pkg, version := range g.resolvedPackages {
@@ -728,17 +817,21 @@ func (g *Generator) generateBOM() string {
 	}
 
 	for imageName, digest := range g.builtImages {
-		shortDigest := digest
-		if idx := strings.Index(digest, ":"); idx != -1 {
-			shortDigest = digest[idx+1:]
-		}
+		shortDigest := g.extractShortDigest(digest)
 		bom[fmt.Sprintf("built:%s", imageName)] = shortDigest
 	}
 
-	if len(bom) == 0 {
-		return ""
-	}
+	return bom
+}
 
+func (g *Generator) extractShortDigest(digest string) string {
+	if idx := strings.Index(digest, ":"); idx != -1 {
+		return digest[idx+1:]
+	}
+	return digest
+}
+
+func (g *Generator) sortBOMKeys(bom map[string]string) map[string]string {
 	keys := make([]string, 0, len(bom))
 	for key := range bom {
 		keys = append(keys, key)
@@ -750,7 +843,11 @@ func (g *Generator) generateBOM() string {
 		sortedBOM[key] = bom[key]
 	}
 
-	jsonBytes, err := json.Marshal(sortedBOM)
+	return sortedBOM
+}
+
+func (g *Generator) formatBOMAsComment(bom map[string]string) string {
+	jsonBytes, err := json.Marshal(bom)
 	if err != nil {
 		slog.Warn("failed to generate BOM", "error", err)
 		return ""

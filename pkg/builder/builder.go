@@ -37,6 +37,17 @@ type OrchestratorConfig struct {
 	Push          bool
 }
 
+type buildJob struct {
+	containerName string
+	index         int
+}
+
+type buildOutput struct {
+	result *BuildResult
+	err    error
+	index  int
+}
+
 type Orchestrator struct {
 	builder       Builder
 	graph         *graph.Graph
@@ -53,7 +64,7 @@ func NewOrchestrator(
 	fs util.WritableFS,
 	cfg OrchestratorConfig,
 ) (*Orchestrator, error) {
-	imageResolver := images.NewResolver(cfg.Registry, true)
+	imageResolver := images.NewResolver(cfg.Registry, false)
 
 	cache, err := NewBuildCache(cfg.OutputDir, fs)
 	if err != nil {
@@ -144,22 +155,23 @@ func (o *Orchestrator) BuildLayers(ctx context.Context, layers [][]string) error
 }
 
 func (o *Orchestrator) buildLayer(ctx context.Context, layerIdx, totalLayers int, layer []string) error {
-	type buildJob struct {
-		containerName string
-		index         int
-	}
-
-	type buildOutput struct {
-		result *BuildResult
-		err    error
-		index  int
-	}
-
 	totalInLayer := len(layer)
 	jobs := make(chan buildJob, totalInLayer)
 	results := make(chan buildOutput, totalInLayer)
 
-	var wg sync.WaitGroup
+	workers := o.calculateWorkers(totalInLayer)
+
+	o.startBuildWorkers(ctx, workers, jobs, results, layerIdx, totalLayers, totalInLayer)
+
+	for i, containerName := range layer {
+		jobs <- buildJob{containerName: containerName, index: i}
+	}
+	close(jobs)
+
+	return o.collectAndHandleResults(results, totalInLayer, layerIdx)
+}
+
+func (o *Orchestrator) calculateWorkers(totalInLayer int) int {
 	workers := o.config.Concurrency
 	if workers <= 0 {
 		workers = 5
@@ -167,158 +179,183 @@ func (o *Orchestrator) buildLayer(ctx context.Context, layerIdx, totalLayers int
 	if workers > totalInLayer {
 		workers = totalInLayer
 	}
+	return workers
+}
+
+func (o *Orchestrator) startBuildWorkers(ctx context.Context, workers int, jobs chan buildJob, results chan buildOutput, layerIdx, totalLayers, totalInLayer int) {
+	var wg sync.WaitGroup
 
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-
-			for job := range jobs {
-				containerName := job.containerName
-				container := o.graph.Containers[containerName]
-				containerDir := filepath.Dir(container.ConfigPath)
-				containerfilePath := filepath.Join(containerDir, "Containerfile")
-
-				ignorePath := filepath.Join(containerDir, "IGNORE")
-				if _, err := o.fs.Stat(ignorePath); err == nil {
-					slog.Info("Skipping build (IGNORE file present)",
-						"container", containerName,
-						"progress", fmt.Sprintf("[%d/%d]", job.index+1, totalInLayer),
-					)
-					results <- buildOutput{result: nil, index: job.index}
-					continue
-				}
-
-				needsRebuild, err := o.cache.NeedsRebuild(containerName, container.ConfigPath)
-				if err != nil {
-					slog.Warn("Cache check failed, rebuilding",
-						"container", containerName,
-						"error", err,
-					)
-					needsRebuild = true
-				}
-
-				var result *BuildResult
-				if !needsRebuild {
-					cachedDigest, ok := o.cache.GetCachedDigest(containerName)
-					if ok {
-						slog.Info("Using cached build",
-							"container", containerName,
-							"digest", cachedDigest[:min(16, len(cachedDigest))],
-							"progress", fmt.Sprintf("[%d/%d]", job.index+1, totalInLayer),
-						)
-
-						imageName := containerName
-						if o.config.Registry != "" {
-							imageName = fmt.Sprintf("%s/%s:latest", o.config.Registry, containerName)
-						}
-
-						result = &BuildResult{
-							ContainerName: containerName,
-							ImageName:     imageName,
-							Digest:        cachedDigest,
-							FullRef:       fmt.Sprintf("%s@%s", imageName, cachedDigest),
-							Size:          0,
-						}
-
-						if o.config.Push {
-							slog.Info("Pushing cached image",
-								"container", containerName,
-								"image", result.ImageName,
-							)
-							pushStart := time.Now()
-							if err := o.builder.PushImage(ctx, result.ImageName); err != nil {
-								slog.Error("Push failed",
-									"container", containerName,
-									"error", err,
-								)
-								results <- buildOutput{err: fmt.Errorf("%s (push): %w", containerName, err), index: job.index}
-								continue
-							}
-							pushDuration := time.Since(pushStart)
-							slog.Info("Push completed",
-								"container", containerName,
-								"duration", pushDuration.Round(time.Second),
-							)
-						}
-
-						results <- buildOutput{result: result, index: job.index}
-						continue
-					}
-				}
-
-				slog.Info("Building container",
-					"layer", layerIdx,
-					"total_layers", totalLayers,
-					"container", containerName,
-					"progress", fmt.Sprintf("[%d/%d]", job.index+1, totalInLayer),
-					"worker", workerID,
-				)
-
-				buildStart := time.Now()
-				result, err = o.builder.BuildContainer(ctx, containerName, containerfilePath, containerDir)
-				buildDuration := time.Since(buildStart)
-
-				if err != nil {
-					slog.Error("Build failed",
-						"container", containerName,
-						"error", err,
-						"duration", buildDuration.Round(time.Second),
-					)
-					results <- buildOutput{err: fmt.Errorf("%s: %w", containerName, err), index: job.index}
-					continue
-				}
-
-				if err := o.cache.Record(result, container.ConfigPath); err != nil {
-					slog.Warn("Failed to record build in cache",
-						"container", containerName,
-						"error", err,
-					)
-				}
-
-				slog.Info("Build completed",
-					"container", containerName,
-					"digest", result.Digest[:min(16, len(result.Digest))],
-					"size_mb", result.Size/(1024*1024),
-					"duration", buildDuration.Round(time.Second),
-				)
-
-				if o.config.Push {
-					slog.Info("Pushing image",
-						"container", containerName,
-						"image", result.ImageName,
-					)
-					pushStart := time.Now()
-					if err := o.builder.PushImage(ctx, result.ImageName); err != nil {
-						slog.Error("Push failed",
-							"container", containerName,
-							"error", err,
-						)
-						results <- buildOutput{err: fmt.Errorf("%s (push): %w", containerName, err), index: job.index}
-						continue
-					}
-					pushDuration := time.Since(pushStart)
-					slog.Info("Push completed",
-						"container", containerName,
-						"duration", pushDuration.Round(time.Second),
-					)
-				}
-
-				results <- buildOutput{result: result, index: job.index}
-			}
+			o.processBuildJob(ctx, jobs, results, layerIdx, totalLayers, totalInLayer, workerID)
 		}(w)
 	}
 
-	for i, containerName := range layer {
-		jobs <- buildJob{containerName: containerName, index: i}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+}
+
+func (o *Orchestrator) processBuildJob(ctx context.Context, jobs chan buildJob, results chan buildOutput, layerIdx, totalLayers, totalInLayer, workerID int) {
+	for job := range jobs {
+		result, err := o.buildContainer(ctx, job, layerIdx, totalLayers, totalInLayer, workerID)
+		if err != nil {
+			results <- buildOutput{err: err, index: job.index}
+		} else {
+			results <- buildOutput{result: result, index: job.index}
+		}
 	}
-	close(jobs)
+}
 
-	wg.Wait()
-	close(results)
+func (o *Orchestrator) buildContainer(ctx context.Context, job buildJob, layerIdx, totalLayers, totalInLayer, workerID int) (*BuildResult, error) {
+	containerName := job.containerName
+	container := o.graph.Containers[containerName]
+	containerDir := filepath.Dir(container.ConfigPath)
+	containerfilePath := filepath.Join(containerDir, "Containerfile")
 
+	if shouldSkip, skipped := o.checkShouldSkip(containerName, containerDir, job.index+1, totalInLayer); shouldSkip {
+		if skipped {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("build skipped for %s", containerName)
+	}
+
+	if result, useCache, err := o.tryUseCachedBuild(ctx, containerName, container.ConfigPath, job.index+1, totalInLayer); useCache {
+		return result, err
+	}
+
+	return o.buildAndPushContainer(ctx, containerName, containerfilePath, containerDir, job.index+1, totalInLayer, layerIdx, totalLayers, workerID, container.ConfigPath)
+}
+
+func (o *Orchestrator) checkShouldSkip(containerName, containerDir string, index, totalInLayer int) (bool, bool) {
+	ignorePath := filepath.Join(containerDir, "IGNORE")
+	if _, err := o.fs.Stat(ignorePath); err == nil {
+		slog.Info("Skipping build (IGNORE file present)",
+			"container", containerName,
+			"progress", fmt.Sprintf("[%d/%d]", index, totalInLayer),
+		)
+		return true, true
+	}
+	return false, false
+}
+
+func (o *Orchestrator) tryUseCachedBuild(ctx context.Context, containerName, configPath string, index, totalInLayer int) (*BuildResult, bool, error) {
+	needsRebuild, err := o.cache.NeedsRebuild(containerName, configPath)
+	if err != nil {
+		slog.Warn("Cache check failed, rebuilding",
+			"container", containerName,
+			"error", err,
+		)
+		needsRebuild = true
+	}
+
+	if needsRebuild {
+		return nil, false, nil
+	}
+
+	cachedDigest, ok := o.cache.GetCachedDigest(containerName)
+	if !ok {
+		return nil, false, nil
+	}
+
+	slog.Info("Using cached build",
+		"container", containerName,
+		"digest", cachedDigest[:min(16, len(cachedDigest))],
+		"progress", fmt.Sprintf("[%d/%d]", index, totalInLayer),
+	)
+
+	imageName := util.FormatImageRefFromName(o.config.Registry, containerName)
+
+	result := &BuildResult{
+		ContainerName: containerName,
+		ImageName:     imageName,
+		Digest:        cachedDigest,
+		FullRef:       util.FormatFullRef(imageName, cachedDigest),
+		Size:          0,
+	}
+
+	if o.config.Push {
+		if err := o.pushImage(ctx, result.ImageName, containerName); err != nil {
+			return nil, false, err
+		}
+	}
+
+	return result, true, nil
+}
+
+func (o *Orchestrator) buildAndPushContainer(ctx context.Context, containerName, containerfilePath, containerDir string, index, totalInLayer, layerIdx, totalLayers, workerID int, configPath string) (*BuildResult, error) {
+	slog.Info("Building container",
+		"layer", layerIdx,
+		"total_layers", totalLayers,
+		"container", containerName,
+		"progress", fmt.Sprintf("[%d/%d]", index, totalInLayer),
+		"worker", workerID,
+	)
+
+	buildStart := time.Now()
+	result, err := o.builder.BuildContainer(ctx, containerName, containerfilePath, containerDir)
+	buildDuration := time.Since(buildStart)
+
+	if err != nil {
+		slog.Error("Build failed",
+			"container", containerName,
+			"error", err,
+			"duration", buildDuration.Round(time.Second),
+		)
+		return nil, fmt.Errorf("%s: %w", containerName, err)
+	}
+
+	if err := o.cache.Record(result, configPath); err != nil {
+		slog.Warn("Failed to record build in cache",
+			"container", containerName,
+			"error", err,
+		)
+	}
+
+	slog.Info("Build completed",
+		"container", containerName,
+		"digest", result.Digest[:min(16, len(result.Digest))],
+		"size_mb", result.Size/(1024*1024),
+		"duration", buildDuration.Round(time.Second),
+	)
+
+	if o.config.Push {
+		if err := o.pushImage(ctx, result.ImageName, containerName); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
+}
+
+func (o *Orchestrator) pushImage(ctx context.Context, imageName, containerName string) error {
+	slog.Info("Pushing image",
+		"container", containerName,
+		"image", imageName,
+	)
+	pushStart := time.Now()
+	if err := o.builder.PushImage(ctx, imageName); err != nil {
+		slog.Error("Push failed",
+			"container", containerName,
+			"error", err,
+		)
+		return fmt.Errorf("%s (push): %w", containerName, err)
+	}
+	pushDuration := time.Since(pushStart)
+	slog.Info("Push completed",
+		"container", containerName,
+		"duration", pushDuration.Round(time.Second),
+	)
+	return nil
+}
+
+func (o *Orchestrator) collectAndHandleResults(results chan buildOutput, totalInLayer, layerIdx int) error {
 	var errors []error
-	for output := range results {
+	for i := 0; i < totalInLayer; i++ {
+		output := <-results
 		if output.err != nil {
 			errors = append(errors, output.err)
 		} else if output.result != nil {
@@ -326,20 +363,20 @@ func (o *Orchestrator) buildLayer(ctx context.Context, layerIdx, totalLayers int
 		}
 	}
 
-	if len(errors) > 0 {
-		slog.Error("Layer build failed",
-			"layer", layerIdx,
-			"failed_builds", len(errors),
-		)
-
-		errMsg := fmt.Sprintf("failed to build %d container(s) in layer %d:", len(errors), layerIdx)
-		for _, err := range errors {
-			errMsg += fmt.Sprintf("\n  - %v", err)
-		}
-		return fmt.Errorf("%s", errMsg)
+	if len(errors) == 0 {
+		return nil
 	}
 
-	return nil
+	slog.Error("Layer build failed",
+		"layer", layerIdx,
+		"failed_builds", len(errors),
+	)
+
+	errMsg := fmt.Sprintf("failed to build %d container(s) in layer %d:", len(errors), layerIdx)
+	for _, err := range errors {
+		errMsg += fmt.Sprintf("\n  - %v", err)
+	}
+	return fmt.Errorf("%s", errMsg)
 }
 
 func (o *Orchestrator) generateContainerfiles(ctx context.Context, layer []string) error {
@@ -350,6 +387,15 @@ func (o *Orchestrator) generateContainerfiles(ctx context.Context, layer []strin
 		if o.config.Registry != "" {
 			imageName := fmt.Sprintf("%s/%s", o.config.Registry, containerName)
 			builtImages[imageName] = result.Digest
+		}
+	}
+
+	localImageNames := make([]string, 0, len(o.graph.Containers))
+	for containerName := range o.graph.Containers {
+		localImageNames = append(localImageNames, containerName)
+		if o.config.Registry != "" {
+			prefixedName := fmt.Sprintf("%s/%s", o.config.Registry, containerName)
+			localImageNames = append(localImageNames, prefixedName)
 		}
 	}
 
@@ -373,6 +419,8 @@ func (o *Orchestrator) generateContainerfiles(ctx context.Context, layer []strin
 		if len(builtImages) > 0 {
 			gen.SetBuiltImages(builtImages)
 		}
+
+		gen.SetLocalImageNames(localImageNames)
 
 		if err := gen.Generate(); err != nil {
 			return fmt.Errorf("generating Containerfile for %s: %w", containerName, err)

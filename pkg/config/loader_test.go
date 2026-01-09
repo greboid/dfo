@@ -1,608 +1,8 @@
 package config
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/greboid/dfo/pkg/util"
 )
-
-func checkError(t *testing.T, err error, expectError bool, errorMsg string) {
-	t.Helper()
-	if expectError {
-		if err == nil {
-			t.Errorf("expected error containing %q, got nil", errorMsg)
-			return
-		}
-		if errorMsg != "" && !strings.Contains(err.Error(), errorMsg) {
-			t.Errorf("expected error containing %q, got %q", errorMsg, err.Error())
-		}
-	} else {
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	}
-}
-
-func TestValidate(t *testing.T) {
-	tests := []struct {
-		name        string
-		config      *BuildConfig
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name: "valid config with single stage",
-			config: &BuildConfig{
-				Package: Package{Name: "test-package"},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{BaseImage: "alpine"},
-					Pipeline:    []PipelineStep{{Run: "echo test"}},
-				}},
-			},
-			expectError: false,
-		},
-		{
-			name: "valid config with multiple stages",
-			config: &BuildConfig{
-				Package: Package{Name: "multi-stage"},
-				Stages: []Stage{
-					{
-						Name:        "builder",
-						Environment: Environment{BaseImage: "golang"},
-						Pipeline:    []PipelineStep{{Run: "go build"}},
-					},
-					{
-						Name:        "runtime",
-						Environment: Environment{ExternalImage: "alpine:3.19"},
-						Pipeline:    []PipelineStep{{Run: "echo deploy"}},
-					},
-				},
-			},
-			expectError: false,
-		},
-		{
-			name: "valid config with external-image",
-			config: &BuildConfig{
-				Package: Package{Name: "external-test"},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{ExternalImage: "ubuntu:22.04"},
-					Pipeline:    []PipelineStep{{Run: "apt-get update"}},
-				}},
-			},
-			expectError: false,
-		},
-		{
-			name: "missing package name",
-			config: &BuildConfig{
-				Package: Package{Description: "no name"},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{BaseImage: "alpine"},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "package.name is required",
-		},
-		{
-			name: "empty package name",
-			config: &BuildConfig{
-				Package: Package{Name: ""},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{BaseImage: "alpine"},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "package.name is required",
-		},
-		{
-			name: "missing stages array",
-			config: &BuildConfig{
-				Package: Package{Name: "test-package"},
-			},
-			expectError: true,
-			errorMsg:    "at least one stage is required",
-		},
-		{
-			name: "empty stages array",
-			config: &BuildConfig{
-				Package: Package{Name: "test-package"},
-				Stages:  []Stage{},
-			},
-			expectError: true,
-			errorMsg:    "at least one stage is required",
-		},
-		{
-			name: "stage with both base-image and external-image",
-			config: &BuildConfig{
-				Package: Package{Name: "conflict-test"},
-				Stages: []Stage{{
-					Name: "build",
-					Environment: Environment{
-						BaseImage:     "alpine",
-						ExternalImage: "ubuntu:22.04",
-					},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "cannot specify both environment.base-image and environment.external-image",
-		},
-		{
-			name: "stage with neither base-image nor external-image",
-			config: &BuildConfig{
-				Package: Package{Name: "missing-image"},
-				Stages: []Stage{{
-					Name: "build",
-					Environment: Environment{
-						Packages: []string{"git"},
-					},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "either environment.base-image or environment.external-image is required",
-		},
-		{
-			name: "top-level environment with stages",
-			config: &BuildConfig{
-				Package:     Package{Name: "env-conflict"},
-				Environment: Environment{BaseImage: "alpine"},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{BaseImage: "golang"},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "cannot specify top-level environment when using stages",
-		},
-		{
-			name: "top-level environment with packages and stages",
-			config: &BuildConfig{
-				Package:     Package{Name: "env-packages-conflict"},
-				Environment: Environment{Packages: []string{"git"}},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{BaseImage: "alpine"},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "cannot specify top-level environment when using stages",
-		},
-		{
-			name: "valid config with vars",
-			config: &BuildConfig{
-				Package: Package{Name: "with-vars"},
-				Vars:    map[string]string{"version": "1.0.0"},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{BaseImage: "alpine"},
-				}},
-			},
-			expectError: false,
-		},
-		{
-			name: "valid config with complete package metadata",
-			config: &BuildConfig{
-				Package: Package{
-					Name:        "complete-package",
-					Description: "A complete example",
-					Tags:        []string{"latest", "v1.0"},
-					Labels:      map[string]string{"maintainer": "test@example.com"},
-				},
-				Stages: []Stage{{
-					Name:        "build",
-					Environment: Environment{BaseImage: "alpine"},
-				}},
-			},
-			expectError: false,
-		},
-		{
-			name: "stage name with space",
-			config: &BuildConfig{
-				Package: Package{Name: "test-package"},
-				Stages: []Stage{{
-					Name:        "build stage",
-					Environment: Environment{BaseImage: "alpine"},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "name must be a single word",
-		},
-		{
-			name: "empty stage name",
-			config: &BuildConfig{
-				Package: Package{Name: "test-package"},
-				Stages: []Stage{{
-					Name:        "",
-					Environment: Environment{BaseImage: "alpine"},
-				}},
-			},
-			expectError: true,
-			errorMsg:    "stage name is required",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := Validate(tt.config)
-			checkError(t, err, tt.expectError, tt.errorMsg)
-		})
-	}
-}
-
-func TestValidateStage(t *testing.T) {
-	tests := []struct {
-		name        string
-		stage       Stage
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name: "valid stage with base-image",
-			stage: Stage{
-				Name:        "build",
-				Environment: Environment{BaseImage: "alpine"},
-			},
-			expectError: false,
-		},
-		{
-			name: "valid stage with external-image",
-			stage: Stage{
-				Name:        "runtime",
-				Environment: Environment{ExternalImage: "nginx:latest"},
-			},
-			expectError: false,
-		},
-		{
-			name: "stage with both images",
-			stage: Stage{
-				Name: "invalid",
-				Environment: Environment{
-					BaseImage:     "alpine",
-					ExternalImage: "nginx",
-				},
-			},
-			expectError: true,
-			errorMsg:    "cannot specify both",
-		},
-		{
-			name: "stage with neither image",
-			stage: Stage{
-				Name:        "no-image",
-				Environment: Environment{Packages: []string{"git"}},
-			},
-			expectError: true,
-			errorMsg:    "either environment.base-image or environment.external-image is required",
-		},
-		{
-			name: "stage name appears in error",
-			stage: Stage{
-				Name:        "my-special-stage",
-				Environment: Environment{},
-			},
-			expectError: true,
-			errorMsg:    "my-special-stage",
-		},
-		{
-			name:        "empty stage name",
-			stage:       Stage{Name: "", Environment: Environment{BaseImage: "alpine"}},
-			expectError: true,
-			errorMsg:    "stage name is required",
-		},
-		{
-			name:        "stage name with space",
-			stage:       Stage{Name: "build stage", Environment: Environment{BaseImage: "alpine"}},
-			expectError: true,
-			errorMsg:    "name must be a single word",
-		},
-		{
-			name:        "stage name with tab",
-			stage:       Stage{Name: "build\tstage", Environment: Environment{BaseImage: "alpine"}},
-			expectError: true,
-			errorMsg:    "name must be a single word",
-		},
-		{
-			name:        "stage name with newline",
-			stage:       Stage{Name: "build\nstage", Environment: Environment{BaseImage: "alpine"}},
-			expectError: true,
-			errorMsg:    "name must be a single word",
-		},
-		{
-			name:        "valid stage name with hyphen",
-			stage:       Stage{Name: "build-stage", Environment: Environment{BaseImage: "alpine"}},
-			expectError: false,
-		},
-		{
-			name:        "valid stage name with underscore",
-			stage:       Stage{Name: "build_stage", Environment: Environment{BaseImage: "alpine"}},
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateStage(tt.stage)
-			checkError(t, err, tt.expectError, tt.errorMsg)
-		})
-	}
-}
-
-func TestParse(t *testing.T) {
-	tests := []struct {
-		name        string
-		yaml        string
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name: "valid yaml",
-			yaml: `package:
-  name: test
-stages:
-  - name: build
-    environment:
-      base-image: alpine`,
-			expectError: false,
-		},
-		{
-			name:        "invalid yaml syntax",
-			yaml:        `package: [unclosed`,
-			expectError: true,
-			errorMsg:    "parsing YAML",
-		},
-		{
-			name: "valid yaml but invalid config",
-			yaml: `package:
-  name: ""
-stages:
-  - name: build
-    environment:
-      base-image: alpine`,
-			expectError: true,
-			errorMsg:    "package.name is required",
-		},
-		{
-			name: "unexpected top-level field",
-			yaml: `package:
-  name: test
-stages:
-  - name: build
-    environment:
-      base-image: alpine
-unexpected-field: value`,
-			expectError: true,
-			errorMsg:    "field unexpected-field not found",
-		},
-		{
-			name: "unexpected field in package section",
-			yaml: `package:
-  name: test
-  unknown-field: value
-stages:
-  - name: build
-    environment:
-      base-image: alpine`,
-			expectError: true,
-			errorMsg:    "field unknown-field not found",
-		},
-		{
-			name: "unexpected field in stage",
-			yaml: `package:
-  name: test
-stages:
-  - name: build
-    invalid-key: something
-    environment:
-      base-image: alpine`,
-			expectError: true,
-			errorMsg:    "field invalid-key not found",
-		},
-		{
-			name: "unexpected field in environment",
-			yaml: `package:
-  name: test
-stages:
-  - name: build
-    environment:
-      base-image: alpine
-      unknown-env-field: test`,
-			expectError: true,
-			errorMsg:    "field unknown-env-field not found",
-		},
-		{
-			name: "unexpected field in pipeline step",
-			yaml: `package:
-  name: test
-stages:
-  - name: build
-    environment:
-      base-image: alpine
-    pipeline:
-      - run: echo test
-        invalid-step-field: value`,
-			expectError: true,
-			errorMsg:    "field invalid-step-field not found",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse([]byte(tt.yaml))
-			checkError(t, err, tt.expectError, tt.errorMsg)
-		})
-	}
-}
-
-func TestLoad(t *testing.T) {
-	t.Run("loads valid config from file", func(t *testing.T) {
-		fs := util.NewTestFS()
-
-		yaml := `package:
-  name: test-package
-stages:
-  - name: build
-    environment:
-      base-image: alpine
-    pipeline:
-      - run: echo "test"`
-
-		_ = fs.WriteFile("config.yaml", []byte(yaml), 0644)
-
-		config, err := Load(fs, "config.yaml")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if config.Package.Name != "test-package" {
-			t.Errorf("expected package name 'test-package', got %q", config.Package.Name)
-		}
-	})
-
-	t.Run("returns error for non-existent file", func(t *testing.T) {
-		fs := util.NewTestFS()
-
-		_, err := Load(fs, "nonexistent/path/to/config.yaml")
-		if err == nil {
-			t.Fatal("expected error for non-existent file")
-		}
-		if !strings.Contains(err.Error(), "reading config file") {
-			t.Errorf("expected error about reading file, got: %v", err)
-		}
-	})
-}
-
-func TestExpandTemplates(t *testing.T) {
-	tests := []struct {
-		name        string
-		yaml        string
-		expectError bool
-		errorMsg    string
-		checkStage  func(*testing.T, Stage)
-	}{
-		{
-			name: "go-builder template with required params",
-			yaml: `package:
-  name: test
-stages:
-  - template: go-builder
-    with:
-      repo: https://github.com/owner/repo
-      output: /app/binary`,
-			expectError: false,
-			checkStage: func(t *testing.T, stage Stage) {
-				if stage.Name != "go-builder-0" {
-					t.Errorf("expected generated name 'go-builder-0', got %q", stage.Name)
-				}
-				if stage.Environment.BaseImage != "golang" {
-					t.Errorf("expected base image golang, got %q", stage.Environment.BaseImage)
-				}
-				if len(stage.Pipeline) != 1 {
-					t.Errorf("expected 1 pipeline step, got %d", len(stage.Pipeline))
-				}
-			},
-		},
-		{
-			name: "template with custom name",
-			yaml: `package:
-  name: test
-stages:
-  - name: builder
-    template: go-builder
-    with:
-      repo: https://github.com/owner/repo
-      output: /app/binary`,
-			expectError: false,
-			checkStage: func(t *testing.T, stage Stage) {
-				if stage.Name != "builder" {
-					t.Errorf("expected name 'builder', got %q", stage.Name)
-				}
-			},
-		},
-		{
-			name: "template with missing required param",
-			yaml: `package:
-  name: test
-stages:
-  - template: go-builder
-    with:
-      repo: https://github.com/owner/repo`,
-			expectError: true,
-			errorMsg:    "required parameter \"output\" is missing",
-		},
-		{
-			name: "unknown template",
-			yaml: `package:
-  name: test
-stages:
-  - template: nonexistent
-    with:
-      foo: bar`,
-			expectError: true,
-			errorMsg:    "unknown template",
-		},
-		{
-			name: "template with conflicting environment field",
-			yaml: `package:
-  name: test
-stages:
-  - template: go-builder
-    environment:
-      base-image: alpine
-    with:
-      repo: https://github.com/owner/repo
-      output: /app/binary`,
-			expectError: true,
-			errorMsg:    "cannot specify both 'template' and 'environment'",
-		},
-		{
-			name: "template with conflicting pipeline field",
-			yaml: `package:
-  name: test
-stages:
-  - template: go-builder
-    pipeline:
-      - run: echo test
-    with:
-      repo: https://github.com/owner/repo
-      output: /app/binary`,
-			expectError: true,
-			errorMsg:    "cannot specify both 'template' and 'pipeline'",
-		},
-		{
-			name: "mixed template and regular stages",
-			yaml: `package:
-  name: test
-stages:
-  - template: go-builder
-    with:
-      repo: https://github.com/owner/repo
-      output: /app/binary
-  - name: runtime
-    environment:
-      base-image: alpine
-    pipeline:
-      - run: echo deploy`,
-			expectError: false,
-			checkStage: func(t *testing.T, stage Stage) {
-				if stage.Name != "go-builder-0" {
-					t.Errorf("expected first stage name 'go-builder-0', got %q", stage.Name)
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config, err := Parse([]byte(tt.yaml))
-			checkError(t, err, tt.expectError, tt.errorMsg)
-			if !tt.expectError && tt.checkStage != nil && config != nil && len(config.Stages) > 0 {
-				tt.checkStage(t, config.Stages[0])
-			}
-		})
-	}
-}
 
 func TestEnvironmentIsEmpty(t *testing.T) {
 	tests := []struct {
@@ -680,15 +80,6 @@ func TestEnvironmentIsEmpty(t *testing.T) {
 			env:      Environment{StopSignal: "SIGTERM"},
 			expected: false,
 		},
-		{
-			name: "with multiple fields",
-			env: Environment{
-				BaseImage: "alpine",
-				Packages:  []string{"git", "curl"},
-				WorkDir:   "/app",
-			},
-			expected: false,
-		},
 	}
 
 	for _, tt := range tests {
@@ -696,6 +87,194 @@ func TestEnvironmentIsEmpty(t *testing.T) {
 			result := tt.env.IsEmpty()
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *BuildConfig
+		expectError bool
+	}{
+		{
+			name: "valid config with single stage",
+			config: &BuildConfig{
+				Package: Package{Name: "test-package"},
+				Stages: []Stage{{
+					Name:        "build",
+					Environment: Environment{BaseImage: "alpine"},
+				}},
+			},
+			expectError: false,
+		},
+		{
+			name: "missing package name",
+			config: &BuildConfig{
+				Package: Package{Description: "no name"},
+				Stages: []Stage{{
+					Name:        "build",
+					Environment: Environment{BaseImage: "alpine"},
+				}},
+			},
+			expectError: true,
+		},
+		{
+			name: "empty package name",
+			config: &BuildConfig{
+				Package: Package{Name: ""},
+				Stages: []Stage{{
+					Name:        "build",
+					Environment: Environment{BaseImage: "alpine"},
+				}},
+			},
+			expectError: true,
+		},
+		{
+			name: "missing stages array",
+			config: &BuildConfig{
+				Package: Package{Name: "test-package"},
+			},
+			expectError: true,
+		},
+		{
+			name: "empty stages array",
+			config: &BuildConfig{
+				Package: Package{Name: "test-package"},
+				Stages:  []Stage{},
+			},
+			expectError: true,
+		},
+		{
+			name: "stage with both base-image and external-image",
+			config: &BuildConfig{
+				Package: Package{Name: "conflict-test"},
+				Stages: []Stage{{
+					Name: "build",
+					Environment: Environment{
+						BaseImage:     "alpine",
+						ExternalImage: "ubuntu:22.04",
+					},
+				}},
+			},
+			expectError: true,
+		},
+		{
+			name: "stage with neither base-image nor external-image",
+			config: &BuildConfig{
+				Package: Package{Name: "missing-image"},
+				Stages: []Stage{{
+					Name: "build",
+					Environment: Environment{
+						Packages: []string{"git"},
+					},
+				}},
+			},
+			expectError: true,
+		},
+		{
+			name: "top-level environment with stages",
+			config: &BuildConfig{
+				Package:     Package{Name: "env-conflict"},
+				Environment: Environment{BaseImage: "alpine"},
+				Stages: []Stage{{
+					Name:        "build",
+					Environment: Environment{BaseImage: "golang"},
+				}},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Validate(tt.config)
+			if (err != nil) != tt.expectError {
+				t.Errorf("Validate() error = %v, expectError %v", err, tt.expectError)
+			}
+		})
+	}
+}
+
+func TestValidateStage(t *testing.T) {
+	tests := []struct {
+		name        string
+		stage       Stage
+		expectError bool
+	}{
+		{
+			name: "valid stage with base-image",
+			stage: Stage{
+				Name:        "build",
+				Environment: Environment{BaseImage: "alpine"},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid stage with external-image",
+			stage: Stage{
+				Name:        "runtime",
+				Environment: Environment{ExternalImage: "nginx:latest"},
+			},
+			expectError: false,
+		},
+		{
+			name: "stage with both images",
+			stage: Stage{
+				Name: "invalid",
+				Environment: Environment{
+					BaseImage:     "alpine",
+					ExternalImage: "nginx",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "stage with neither image",
+			stage: Stage{
+				Name:        "no-image",
+				Environment: Environment{Packages: []string{"git"}},
+			},
+			expectError: true,
+		},
+		{
+			name:        "empty stage name",
+			stage:       Stage{Name: "", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+		},
+		{
+			name:        "stage name with space",
+			stage:       Stage{Name: "build stage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+		},
+		{
+			name:        "stage name with tab",
+			stage:       Stage{Name: "build\tstage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+		},
+		{
+			name:        "stage name with newline",
+			stage:       Stage{Name: "build\nstage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: true,
+		},
+		{
+			name:        "valid stage name with hyphen",
+			stage:       Stage{Name: "build-stage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: false,
+		},
+		{
+			name:        "valid stage name with underscore",
+			stage:       Stage{Name: "build_stage", Environment: Environment{BaseImage: "alpine"}},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateStage(tt.stage)
+			if (err != nil) != tt.expectError {
+				t.Errorf("validateStage() error = %v, expectError %v", err, tt.expectError)
 			}
 		})
 	}

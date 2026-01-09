@@ -111,24 +111,40 @@ func rustBuilder(params map[string]any) (TemplateResult, error) {
 }
 
 func goApp(params map[string]any) (TemplateResult, error) {
-	repo, _ := params["repo"].(string)
 	binary, _ := params["binary"].(string)
 
-	workdir := "/src"
-	if wd, ok := params["workdir"].(string); ok {
-		workdir = wd
+	buildParams := prepareGoBuildParams(params)
+
+	volumes, err := ParseVolumes(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
 	}
 
-	pkg := "."
-	if p, ok := params["package"].(string); ok {
-		pkg = p
+	extraCopies, err := ParseExtraCopies(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing extra-copies: %w", err)
 	}
+
+	buildStage := createGoBuildStage(buildParams, volumes)
+	rootfsStage := createGoRootfsStage(binary, volumes, extraCopies)
+	finalStage := createFinalStage(binary, params)
+
+	return TemplateResult{
+		Stages: []StageResult{buildStage, rootfsStage, finalStage},
+	}, nil
+}
+
+func prepareGoBuildParams(params map[string]any) map[string]any {
+	workdir := getStringOrDefault(params, "workdir", "/src")
+	pkg := getStringOrDefault(params, "package", ".")
+	repo, _ := params["repo"].(string)
 
 	buildParams := map[string]any{
 		"workdir": workdir,
 		"repo":    repo,
 		"package": pkg,
 	}
+
 	if tag, ok := params["tag"].(string); ok {
 		buildParams["tag"] = tag
 	}
@@ -144,17 +160,20 @@ func goApp(params map[string]any) (TemplateResult, error) {
 	if goExperiment, ok := params["go-experiment"].(string); ok {
 		buildParams["go-experiment"] = goExperiment
 	}
-
-	volumes, err := ParseVolumes(params)
-	if err != nil {
-		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
+	if packages, ok := params["packages"].([]any); ok {
+		buildParams["packages"] = packages
+	}
+	if goGenerate, ok := params["go-generate"].([]any); ok {
+		buildParams["go-generate"] = goGenerate
+	}
+	if goInstall, ok := params["go-install"].([]any); ok {
+		buildParams["go-install"] = goInstall
 	}
 
-	extraCopies, err := ParseExtraCopies(params)
-	if err != nil {
-		return TemplateResult{}, fmt.Errorf("parsing extra-copies: %w", err)
-	}
+	return buildParams
+}
 
+func createGoBuildStage(buildParams map[string]any, volumes []VolumeSpec) StageResult {
 	buildPipeline := []PipelineStepResult{
 		{
 			Uses: "build-go-static",
@@ -166,14 +185,16 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		buildPipeline = append(buildPipeline, *volumeStep)
 	}
 
-	buildStage := StageResult{
+	return StageResult{
 		Name: "build",
 		Environment: EnvironmentResult{
 			BaseImage: "golang",
 		},
 		Pipeline: buildPipeline,
 	}
+}
 
+func createGoRootfsStage(binary string, volumes []VolumeSpec, extraCopies []ExtraCopySpec) StageResult {
 	rootfsPipeline := []PipelineStepResult{
 		{
 			Copy: &CopyStepResult{
@@ -211,14 +232,16 @@ func goApp(params map[string]any) (TemplateResult, error) {
 		})
 	}
 
-	rootfsStage := StageResult{
+	return StageResult{
 		Name: "rootfs",
 		Environment: EnvironmentResult{
 			BaseImage: "base",
 		},
 		Pipeline: rootfsPipeline,
 	}
+}
 
+func createFinalStage(binary string, params map[string]any) StageResult {
 	finalStage := StageResult{
 		Name: "final",
 		Environment: EnvironmentResult{
@@ -237,53 +260,64 @@ func goApp(params map[string]any) (TemplateResult, error) {
 	}
 
 	if expose, ok := params["expose"].([]any); ok {
-		finalStage.Environment.Expose = make([]string, len(expose))
-		for i, port := range expose {
-			if portStr, ok := port.(string); ok {
-				finalStage.Environment.Expose[i] = portStr
-			}
-		}
+		finalStage.Environment.Expose = convertStringArray(expose)
 	}
 
 	if entrypoint, ok := params["entrypoint"].([]any); ok {
-		finalStage.Environment.Entrypoint = make([]string, len(entrypoint))
-		for i, arg := range entrypoint {
-			if argStr, ok := arg.(string); ok {
-				finalStage.Environment.Entrypoint[i] = argStr
-			}
-		}
+		finalStage.Environment.Entrypoint = convertStringArray(entrypoint)
 	}
 
 	if cmd, ok := params["cmd"].([]any); ok {
-		finalStage.Environment.Cmd = make([]string, len(cmd))
-		for i, arg := range cmd {
-			if argStr, ok := arg.(string); ok {
-				finalStage.Environment.Cmd[i] = argStr
-			}
+		finalStage.Environment.Cmd = convertStringArray(cmd)
+	}
+
+	return finalStage
+}
+
+func getStringOrDefault(params map[string]any, key, defaultValue string) string {
+	if val, ok := params[key].(string); ok {
+		return val
+	}
+	return defaultValue
+}
+
+func convertStringArray(arr []any) []string {
+	result := make([]string, len(arr))
+	for i, item := range arr {
+		if str, ok := item.(string); ok {
+			result[i] = str
 		}
 	}
+	return result
+}
+
+func rustApp(params map[string]any) (TemplateResult, error) {
+	binary, _ := params["binary"].(string)
+
+	buildParams := prepareRustBuildParams(params)
+	packages := preparePackages(params)
+
+	volumes, err := ParseVolumes(params)
+	if err != nil {
+		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
+	}
+
+	buildStage := createRustBuildStage(buildParams, packages, volumes)
+	rootfsStage := createRustRootfsStage(binary, volumes)
+	finalStage := createFinalStage(binary, params)
 
 	return TemplateResult{
 		Stages: []StageResult{buildStage, rootfsStage, finalStage},
 	}, nil
 }
 
-func rustApp(params map[string]any) (TemplateResult, error) {
+func prepareRustBuildParams(params map[string]any) map[string]any {
 	repo, _ := params["repo"].(string)
-	binary, _ := params["binary"].(string)
-
-	packages := []string{"git"}
-	if pkgs, ok := params["packages"].([]any); ok {
-		for _, pkg := range pkgs {
-			if pkgStr, ok := pkg.(string); ok {
-				packages = append(packages, pkgStr)
-			}
-		}
-	}
 
 	buildParams := map[string]any{
 		"repo": repo,
 	}
+
 	if workdir, ok := params["workdir"].(string); ok {
 		buildParams["workdir"] = workdir
 	}
@@ -297,11 +331,22 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		buildParams["tag"] = tag
 	}
 
-	volumes, err := ParseVolumes(params)
-	if err != nil {
-		return TemplateResult{}, fmt.Errorf("parsing volumes: %w", err)
-	}
+	return buildParams
+}
 
+func preparePackages(params map[string]any) []string {
+	packages := []string{"git"}
+	if pkgs, ok := params["packages"].([]any); ok {
+		for _, pkg := range pkgs {
+			if pkgStr, ok := pkg.(string); ok {
+				packages = append(packages, pkgStr)
+			}
+		}
+	}
+	return packages
+}
+
+func createRustBuildStage(buildParams map[string]any, packages []string, volumes []VolumeSpec) StageResult {
 	buildPipeline := []PipelineStepResult{
 		{
 			Uses: "clone-and-build-rust",
@@ -313,7 +358,7 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		buildPipeline = append(buildPipeline, *volumeStep)
 	}
 
-	buildStage := StageResult{
+	return StageResult{
 		Name: "build",
 		Environment: EnvironmentResult{
 			BaseImage: "rust",
@@ -321,7 +366,9 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		},
 		Pipeline: buildPipeline,
 	}
+}
 
+func createRustRootfsStage(binary string, volumes []VolumeSpec) StageResult {
 	rootfsPipeline := []PipelineStepResult{
 		{
 			Copy: &CopyStepResult{
@@ -342,61 +389,13 @@ func rustApp(params map[string]any) (TemplateResult, error) {
 		})
 	}
 
-	rootfsStage := StageResult{
+	return StageResult{
 		Name: "rootfs",
 		Environment: EnvironmentResult{
 			BaseImage: "base",
 		},
 		Pipeline: rootfsPipeline,
 	}
-
-	finalStage := StageResult{
-		Name: "final",
-		Environment: EnvironmentResult{
-			BaseImage:  "base",
-			Entrypoint: []string{"/" + binary},
-		},
-		Pipeline: []PipelineStepResult{
-			{
-				Copy: &CopyStepResult{
-					FromStage: "rootfs",
-					From:      "/rootfs/",
-					To:        "/",
-				},
-			},
-		},
-	}
-
-	if expose, ok := params["expose"].([]any); ok {
-		finalStage.Environment.Expose = make([]string, len(expose))
-		for i, port := range expose {
-			if portStr, ok := port.(string); ok {
-				finalStage.Environment.Expose[i] = portStr
-			}
-		}
-	}
-
-	if entrypoint, ok := params["entrypoint"].([]any); ok {
-		finalStage.Environment.Entrypoint = make([]string, len(entrypoint))
-		for i, arg := range entrypoint {
-			if argStr, ok := arg.(string); ok {
-				finalStage.Environment.Entrypoint[i] = argStr
-			}
-		}
-	}
-
-	if cmd, ok := params["cmd"].([]any); ok {
-		finalStage.Environment.Cmd = make([]string, len(cmd))
-		for i, arg := range cmd {
-			if argStr, ok := arg.(string); ok {
-				finalStage.Environment.Cmd[i] = argStr
-			}
-		}
-	}
-
-	return TemplateResult{
-		Stages: []StageResult{buildStage, rootfsStage, finalStage},
-	}, nil
 }
 
 type BinarySpec struct {
@@ -413,6 +412,24 @@ type BinarySpec struct {
 }
 
 func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
+	binariesList, err := parseBinariesList(params)
+	if err != nil {
+		return nil, err
+	}
+
+	binaries := make([]BinarySpec, 0, len(binariesList))
+	for i, b := range binariesList {
+		spec, err := parseBinarySpec(b, i)
+		if err != nil {
+			return nil, err
+		}
+		binaries = append(binaries, spec)
+	}
+
+	return binaries, nil
+}
+
+func parseBinariesList(params map[string]any) ([]any, error) {
 	binariesParam, ok := params["binaries"]
 	if !ok {
 		return nil, fmt.Errorf("binaries parameter is required")
@@ -427,74 +444,81 @@ func ParseBinaries(params map[string]any) ([]BinarySpec, error) {
 		return nil, fmt.Errorf("at least one binary must be specified")
 	}
 
-	binaries := make([]BinarySpec, 0, len(binariesList))
-	for i, b := range binariesList {
-		binaryMap, ok := b.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("binary at index %d must be a map", i)
-		}
+	return binariesList, nil
+}
 
-		repo, ok := binaryMap["repo"].(string)
-		if !ok || repo == "" {
-			return nil, fmt.Errorf("binary at index %d must have a repo", i)
-		}
-
-		binary, ok := binaryMap["binary"].(string)
-		if !ok || binary == "" {
-			return nil, fmt.Errorf("binary at index %d must have a binary name", i)
-		}
-
-		spec := BinarySpec{
-			Repo:   repo,
-			Binary: binary,
-		}
-
-		if pkg, ok := binaryMap["package"].(string); ok {
-			spec.Package = pkg
-		} else {
-			spec.Package = "."
-		}
-
-		if goTags, ok := binaryMap["go-tags"].(string); ok {
-			spec.GoTags = goTags
-		}
-
-		if goExperiment, ok := binaryMap["go-experiment"].(string); ok {
-			spec.GoExperiment = goExperiment
-		}
-
-		if ignore, ok := binaryMap["ignore"].([]any); ok {
-			for _, ig := range ignore {
-				if igs, ok := ig.(string); ok {
-					spec.Ignore = append(spec.Ignore, igs)
-				}
-			}
-		}
-
-		if patches, ok := binaryMap["patches"].([]any); ok {
-			for _, p := range patches {
-				if ps, ok := p.(string); ok {
-					spec.Patches = append(spec.Patches, ps)
-				}
-			}
-		}
-
-		if entrypoint, ok := binaryMap["entrypoint"].(bool); ok {
-			spec.Entrypoint = entrypoint
-		}
-
-		if cgo, ok := binaryMap["cgo"].(bool); ok {
-			spec.Cgo = cgo
-		}
-
-		if tag, ok := binaryMap["tag"].(string); ok {
-			spec.Tag = tag
-		}
-
-		binaries = append(binaries, spec)
+func parseBinarySpec(b any, index int) (BinarySpec, error) {
+	binaryMap, ok := b.(map[string]any)
+	if !ok {
+		return BinarySpec{}, fmt.Errorf("binary at index %d must be a map", index)
 	}
 
-	return binaries, nil
+	repo, err := getStringField(binaryMap, "repo", index)
+	if err != nil {
+		return BinarySpec{}, err
+	}
+
+	binary, err := getStringField(binaryMap, "binary", index)
+	if err != nil {
+		return BinarySpec{}, err
+	}
+
+	spec := BinarySpec{
+		Repo:   repo,
+		Binary: binary,
+	}
+
+	if pkg, ok := binaryMap["package"].(string); ok {
+		spec.Package = pkg
+	} else {
+		spec.Package = "."
+	}
+
+	if goTags, ok := binaryMap["go-tags"].(string); ok {
+		spec.GoTags = goTags
+	}
+
+	if goExperiment, ok := binaryMap["go-experiment"].(string); ok {
+		spec.GoExperiment = goExperiment
+	}
+
+	if ignore, ok := binaryMap["ignore"].([]any); ok {
+		for _, ig := range ignore {
+			if igs, ok := ig.(string); ok {
+				spec.Ignore = append(spec.Ignore, igs)
+			}
+		}
+	}
+
+	if patches, ok := binaryMap["patches"].([]any); ok {
+		for _, p := range patches {
+			if ps, ok := p.(string); ok {
+				spec.Patches = append(spec.Patches, ps)
+			}
+		}
+	}
+
+	if entrypoint, ok := binaryMap["entrypoint"].(bool); ok {
+		spec.Entrypoint = entrypoint
+	}
+
+	if cgo, ok := binaryMap["cgo"].(bool); ok {
+		spec.Cgo = cgo
+	}
+
+	if tag, ok := binaryMap["tag"].(string); ok {
+		spec.Tag = tag
+	}
+
+	return spec, nil
+}
+
+func getStringField(m map[string]any, field string, index int) (string, error) {
+	val, ok := m[field].(string)
+	if !ok || val == "" {
+		return "", fmt.Errorf("binary at index %d must have a %s", index, field)
+	}
+	return val, nil
 }
 
 func multiGoApp(params map[string]any) (TemplateResult, error) {
@@ -513,68 +537,95 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		return TemplateResult{}, fmt.Errorf("parsing extra-copies: %w", err)
 	}
 
-	clonedRepos := make(map[string]string)
+	buildPipeline := createMultiBuildPipeline(binaries)
+	buildStage := createMultiBuildStage(buildPipeline, volumes)
+	rootfsStage := createMultiRootfsStage(binaries, volumes, extraCopies)
+	finalStage := createMultiFinalStage(binaries, params)
 
+	return TemplateResult{
+		Stages: []StageResult{buildStage, rootfsStage, finalStage},
+	}, nil
+}
+
+func createMultiBuildPipeline(binaries []BinarySpec) []PipelineStepResult {
+	clonedRepos := make(map[string]string)
 	var buildPipeline []PipelineStepResult
 
 	for _, bin := range binaries {
-		workdir, alreadyCloned := clonedRepos[bin.Repo]
-		if !alreadyCloned {
-			workdir = "/src"
-			if ownerRepo := pipelines.ExtractGitHubOwnerRepo(bin.Repo); ownerRepo != "" {
-				workdir = "/src/" + ownerRepo
-			}
-			clonedRepos[bin.Repo] = workdir
-
-			cloneWith := map[string]any{
-				"repo":    bin.Repo,
-				"workdir": workdir,
-			}
-			if bin.Tag != "" {
-				cloneWith["tag"] = bin.Tag
-			}
-			buildPipeline = append(buildPipeline, PipelineStepResult{
-				Uses: "clone",
-				With: cloneWith,
-			})
-		}
-
-		buildParams := map[string]any{
-			"workdir": workdir,
-			"package": bin.Package,
-			"output":  "/" + bin.Binary,
-		}
-		if len(bin.Ignore) > 0 {
-			buildParams["ignore"] = bin.Ignore
-		}
-		if bin.GoTags != "" {
-			buildParams["go-tags"] = bin.GoTags
-		}
-		if bin.GoExperiment != "" {
-			buildParams["go-experiment"] = bin.GoExperiment
-		}
-		if bin.Cgo {
-			buildParams["cgo"] = bin.Cgo
-		}
-
-		buildPipeline = append(buildPipeline, PipelineStepResult{
-			Uses: "build-go-only",
-			With: buildParams,
-		})
+		workdir := getWorkdirForBin(bin, clonedRepos)
+		buildPipeline = append(buildPipeline, createCloneStep(bin, workdir)...)
+		buildPipeline = append(buildPipeline, createBuildOnlyStep(bin, workdir))
 	}
 
+	return buildPipeline
+}
+
+func getWorkdirForBin(bin BinarySpec, clonedRepos map[string]string) string {
+	workdir, alreadyCloned := clonedRepos[bin.Repo]
+	if !alreadyCloned {
+		workdir = "/src"
+		if ownerRepo := pipelines.ExtractGitHubOwnerRepo(bin.Repo); ownerRepo != "" {
+			workdir = "/src/" + ownerRepo
+		}
+		clonedRepos[bin.Repo] = workdir
+	}
+	return workdir
+}
+
+func createCloneStep(bin BinarySpec, workdir string) []PipelineStepResult {
+	return []PipelineStepResult{
+		{
+			Uses: "clone",
+			With: map[string]any{
+				"repo":    bin.Repo,
+				"workdir": workdir,
+				"tag":     bin.Tag,
+			},
+		},
+	}
+}
+
+func createBuildOnlyStep(bin BinarySpec, workdir string) PipelineStepResult {
+	buildParams := map[string]any{
+		"workdir": workdir,
+		"package": bin.Package,
+		"output":  "/" + bin.Binary,
+	}
+
+	if len(bin.Ignore) > 0 {
+		buildParams["ignore"] = bin.Ignore
+	}
+	if bin.GoTags != "" {
+		buildParams["go-tags"] = bin.GoTags
+	}
+	if bin.GoExperiment != "" {
+		buildParams["go-experiment"] = bin.GoExperiment
+	}
+	if bin.Cgo {
+		buildParams["cgo"] = bin.Cgo
+	}
+
+	return PipelineStepResult{
+		Uses: "build-go-only",
+		With: buildParams,
+	}
+}
+
+func createMultiBuildStage(buildPipeline []PipelineStepResult, volumes []VolumeSpec) StageResult {
 	if volumeStep := CreateVolumesStep(volumes); volumeStep != nil {
 		buildPipeline = append(buildPipeline, *volumeStep)
 	}
 
-	buildStage := StageResult{
+	return StageResult{
 		Name: "build",
 		Environment: EnvironmentResult{
 			BaseImage: "golang",
 		},
 		Pipeline: buildPipeline,
 	}
+}
 
+func createMultiRootfsStage(binaries []BinarySpec, volumes []VolumeSpec, extraCopies []ExtraCopySpec) StageResult {
 	var rootfsPipeline []PipelineStepResult
 
 	for _, bin := range binaries {
@@ -617,21 +668,17 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 		})
 	}
 
-	rootfsStage := StageResult{
+	return StageResult{
 		Name: "rootfs",
 		Environment: EnvironmentResult{
 			BaseImage: "base",
 		},
 		Pipeline: rootfsPipeline,
 	}
+}
 
-	entrypointBinary := binaries[0].Binary
-	for _, bin := range binaries {
-		if bin.Entrypoint {
-			entrypointBinary = bin.Binary
-			break
-		}
-	}
+func createMultiFinalStage(binaries []BinarySpec, params map[string]any) StageResult {
+	entrypointBinary := findEntrypointBinary(binaries)
 
 	finalStage := StageResult{
 		Name: "final",
@@ -651,35 +698,30 @@ func multiGoApp(params map[string]any) (TemplateResult, error) {
 	}
 
 	if expose, ok := params["expose"].([]any); ok {
-		finalStage.Environment.Expose = make([]string, len(expose))
-		for i, port := range expose {
-			if portStr, ok := port.(string); ok {
-				finalStage.Environment.Expose[i] = portStr
-			}
-		}
+		finalStage.Environment.Expose = convertStringArray(expose)
 	}
 
 	if entrypoint, ok := params["entrypoint"].([]any); ok {
-		finalStage.Environment.Entrypoint = make([]string, len(entrypoint))
-		for i, arg := range entrypoint {
-			if argStr, ok := arg.(string); ok {
-				finalStage.Environment.Entrypoint[i] = argStr
-			}
-		}
+		finalStage.Environment.Entrypoint = convertStringArray(entrypoint)
 	}
 
 	if cmd, ok := params["cmd"].([]any); ok {
-		finalStage.Environment.Cmd = make([]string, len(cmd))
-		for i, arg := range cmd {
-			if argStr, ok := arg.(string); ok {
-				finalStage.Environment.Cmd[i] = argStr
-			}
-		}
+		finalStage.Environment.Cmd = convertStringArray(cmd)
 	}
 
-	return TemplateResult{
-		Stages: []StageResult{buildStage, rootfsStage, finalStage},
-	}, nil
+	return finalStage
+}
+
+func findEntrypointBinary(binaries []BinarySpec) string {
+	for _, bin := range binaries {
+		if bin.Entrypoint {
+			return bin.Binary
+		}
+	}
+	if len(binaries) > 0 {
+		return binaries[0].Binary
+	}
+	return ""
 }
 
 type VolumeSpec struct {

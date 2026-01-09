@@ -49,11 +49,30 @@ func ProcessConfig(fs util.WritableFS, configPath, outputDir string, alpineClien
 	return &ProcessResult{PackageName: cfg.Package.Name}, nil
 }
 
-func ProcessConfigInPlace(fs util.WritableFS, configPath string, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass, registry string, imageResolver *images.Resolver) (*ProcessResult, error) {
-	slog.Debug("processing config in place",
+func ProcessConfigInPlace(fs util.WritableFS, configPath string, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass, registry string, imageResolver *images.Resolver, localImageNames []string) (*ProcessResult, error) {
+	cfg, err := config.Load(fs, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+
+	outputDir := path.Dir(configPath)
+
+	gen := generator.New(cfg, outputDir, fs, alpineClient, alpineVersion, gitUser, gitPass, registry, imageResolver)
+	gen.SetLocalImageNames(localImageNames)
+	if err := gen.Generate(); err != nil {
+		return nil, fmt.Errorf("generating templates: %w", err)
+	}
+
+	return &ProcessResult{PackageName: cfg.Package.Name}, nil
+}
+
+func ProcessConfigWithBuiltImages(fs util.WritableFS, configPath, outputDir string, alpineClient *packages.AlpineClient, alpineVersion, gitUser, gitPass, registry string, imageResolver *images.Resolver, builtImages map[string]string, localImageNames []string) (*ProcessResult, error) {
+	slog.Debug("processing config with built images",
 		"config_path", configPath,
+		"output_dir", outputDir,
 		"alpine_version", alpineVersion,
-		"registry", registry)
+		"registry", registry,
+		"built_images", builtImages)
 
 	cfg, err := config.Load(fs, configPath)
 	if err != nil {
@@ -62,9 +81,17 @@ func ProcessConfigInPlace(fs util.WritableFS, configPath string, alpineClient *p
 
 	slog.Debug("loaded config", "package_name", cfg.Package.Name)
 
-	outputDir := path.Dir(configPath)
+	if outputDir == "" {
+		outputDir = path.Join(path.Dir(configPath), cfg.Package.Name)
+	}
 
 	gen := generator.New(cfg, outputDir, fs, alpineClient, alpineVersion, gitUser, gitPass, registry, imageResolver)
+	if builtImages != nil {
+		gen.SetBuiltImages(builtImages)
+	}
+	if localImageNames != nil {
+		gen.SetLocalImageNames(localImageNames)
+	}
 	if err := gen.Generate(); err != nil {
 		return nil, fmt.Errorf("generating templates: %w", err)
 	}

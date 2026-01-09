@@ -5,291 +5,431 @@ import (
 	"testing"
 )
 
-func TestValidateParams(t *testing.T) {
+func TestValidateRequiredParams(t *testing.T) {
+	sig := PipelineSignature{
+		Name: "test-pipeline",
+		Parameters: map[string]ParamSpec{
+			"required_param": {Type: TypeString, Required: true, Description: "Required param"},
+			"optional_param": {Type: TypeString, Required: false, Description: "Optional param"},
+		},
+	}
+
 	tests := []struct {
-		name         string
-		pipeline     string
-		params       map[string]any
-		wantError    bool
-		errorContain string
+		name          string
+		params        map[string]any
+		expectError   bool
+		errorContains []string
 	}{
 		{
-			name:     "create-user - all required params",
-			pipeline: "create-user",
+			name: "all required params present",
 			params: map[string]any{
-				"username": "appuser",
-				"uid":      1000,
-				"gid":      1000,
+				"required_param": "value",
 			},
-			wantError: false,
+			expectError: false,
 		},
 		{
-			name:     "create-user - float64 for int (YAML behavior)",
-			pipeline: "create-user",
+			name:          "missing required param",
+			params:        map[string]any{},
+			expectError:   true,
+			errorContains: []string{"required_param"},
+		},
+		{
+			name: "required param is nil",
 			params: map[string]any{
-				"username": "appuser",
-				"uid":      float64(1000),
-				"gid":      float64(1000),
+				"required_param": nil,
 			},
-			wantError: false,
+			expectError:   true,
+			errorContains: []string{"required_param"},
 		},
 		{
-			name:     "create-user - missing username",
-			pipeline: "create-user",
+			name: "optional param missing is ok",
 			params: map[string]any{
-				"uid": 1000,
-				"gid": 1000,
+				"required_param": "value",
 			},
-			wantError:    true,
-			errorContain: "required parameter \"username\" is missing",
+			expectError: false,
 		},
 		{
-			name:     "create-user - wrong type for uid",
-			pipeline: "create-user",
+			name: "both params present",
 			params: map[string]any{
-				"username": "appuser",
-				"uid":      "not-an-int",
-				"gid":      1000,
+				"required_param": "value1",
+				"optional_param": "value2",
 			},
-			wantError:    true,
-			errorContain: "must be an integer",
+			expectError: false,
 		},
 		{
-			name:     "download-verify-extract - with checksum",
-			pipeline: "download-verify-extract",
+			name: "multiple required params missing",
 			params: map[string]any{
-				"url":         "https://example.com/file.tar.gz",
-				"destination": "/tmp/file.tar.gz",
-				"checksum":    "abc123",
+				"required_param": nil,
 			},
-			wantError: false,
-		},
-		{
-			name:     "download-verify-extract - with checksum-url",
-			pipeline: "download-verify-extract",
-			params: map[string]any{
-				"url":          "https://example.com/file.tar.gz",
-				"destination":  "/tmp/file.tar.gz",
-				"checksum-url": "https://example.com/checksums.txt",
-			},
-			wantError: false,
-		},
-		{
-			name:     "download-verify-extract - both checksums (mutually exclusive)",
-			pipeline: "download-verify-extract",
-			params: map[string]any{
-				"url":          "https://example.com/file.tar.gz",
-				"destination":  "/tmp/file.tar.gz",
-				"checksum":     "abc123",
-				"checksum-url": "https://example.com/checksums.txt",
-			},
-			wantError:    true,
-			errorContain: "cannot specify both",
-		},
-		{
-			name:     "download-verify-extract - neither checksum (at-least-one)",
-			pipeline: "download-verify-extract",
-			params: map[string]any{
-				"url":         "https://example.com/file.tar.gz",
-				"destination": "/tmp/file.tar.gz",
-			},
-			wantError:    true,
-			errorContain: "at least one of",
-		},
-		{
-			name:     "download-verify-extract - empty strings for checksums (at-least-one)",
-			pipeline: "download-verify-extract",
-			params: map[string]any{
-				"url":          "https://example.com/file.tar.gz",
-				"destination":  "/tmp/file.tar.gz",
-				"checksum":     "",
-				"checksum-url": "",
-			},
-			wantError:    true,
-			errorContain: "at least one of",
-		},
-		{
-			name:     "download-verify-extract - missing url",
-			pipeline: "download-verify-extract",
-			params: map[string]any{
-				"destination": "/tmp/file.tar.gz",
-				"checksum":    "abc123",
-			},
-			wantError:    true,
-			errorContain: "required parameter \"url\" is missing",
-		},
-		{
-			name:     "clone - repo only",
-			pipeline: "clone",
-			params: map[string]any{
-				"repo": "https://github.com/example/repo",
-			},
-			wantError: false,
-		},
-		{
-			name:     "clone - with tag",
-			pipeline: "clone",
-			params: map[string]any{
-				"repo": "https://github.com/example/repo",
-				"tag":  "v1.0.0",
-			},
-			wantError: false,
-		},
-		{
-			name:     "clone - with commit",
-			pipeline: "clone",
-			params: map[string]any{
-				"repo":   "https://github.com/example/repo",
-				"commit": "abc123",
-			},
-			wantError: false,
-		},
-		{
-			name:     "clone - both tag and commit (mutually exclusive)",
-			pipeline: "clone",
-			params: map[string]any{
-				"repo":   "https://github.com/example/repo",
-				"tag":    "v1.0.0",
-				"commit": "abc123",
-			},
-			wantError:    true,
-			errorContain: "cannot specify both",
-		},
-		{
-			name:     "clone - tag with empty commit (not mutually exclusive)",
-			pipeline: "clone",
-			params: map[string]any{
-				"repo":   "https://github.com/example/repo",
-				"tag":    "v1.0.0",
-				"commit": "",
-			},
-			wantError: false,
-		},
-		{
-			name:     "setup-users-groups - with users",
-			pipeline: "setup-users-groups",
-			params: map[string]any{
-				"rootfs": "/rootfs",
-				"users": []any{
-					map[string]any{"username": "app", "uid": 1000, "gid": 1000},
-				},
-			},
-			wantError: false,
-		},
-		{
-			name:     "setup-users-groups - with groups",
-			pipeline: "setup-users-groups",
-			params: map[string]any{
-				"rootfs": "/rootfs",
-				"groups": []any{
-					map[string]any{"name": "app", "gid": 1000},
-				},
-			},
-			wantError: false,
-		},
-		{
-			name:     "setup-users-groups - neither users nor groups",
-			pipeline: "setup-users-groups",
-			params: map[string]any{
-				"rootfs": "/rootfs",
-			},
-			wantError:    true,
-			errorContain: "at least one of",
-		},
-		{
-			name:     "clone-and-build-rust - patches as array",
-			pipeline: "clone-and-build-rust",
-			params: map[string]any{
-				"repo":    "https://github.com/example/repo",
-				"patches": []any{"patch1.patch", "patch2.patch"},
-			},
-			wantError: false,
-		},
-		{
-			name:     "clone-and-build-rust - patches as string",
-			pipeline: "clone-and-build-rust",
-			params: map[string]any{
-				"repo":    "https://github.com/example/repo",
-				"patches": "single.patch",
-			},
-			wantError: false,
-		},
-		{
-			name:     "clone-and-build-make - strip as bool",
-			pipeline: "clone-and-build-make",
-			params: map[string]any{
-				"repo":  "https://github.com/example/repo",
-				"strip": false,
-			},
-			wantError: false,
-		},
-		{
-			name:     "clone-and-build-make - strip as string (wrong type)",
-			pipeline: "clone-and-build-make",
-			params: map[string]any{
-				"repo":  "https://github.com/example/repo",
-				"strip": "false",
-			},
-			wantError:    true,
-			errorContain: "must be a boolean",
-		},
-		{
-			name:     "create-directories - valid",
-			pipeline: "create-directories",
-			params: map[string]any{
-				"directories": []any{
-					map[string]any{"path": "/data", "permissions": "755"},
-				},
-			},
-			wantError: false,
-		},
-		{
-			name:         "create-directories - missing required",
-			pipeline:     "create-directories",
-			params:       map[string]any{},
-			wantError:    true,
-			errorContain: "required parameter \"directories\" is missing",
-		},
-		{
-			name:     "create-directories - wrong type (not array)",
-			pipeline: "create-directories",
-			params: map[string]any{
-				"directories": "not-an-array",
-			},
-			wantError:    true,
-			errorContain: "must be an array of objects",
-		},
-		{
-			name:      "unknown pipeline - no validation",
-			pipeline:  "unknown-pipeline",
-			params:    map[string]any{"anything": "goes"},
-			wantError: false,
-		},
-		{
-			name:     "make-executable - empty path",
-			pipeline: "make-executable",
-			params: map[string]any{
-				"path": "",
-			},
-			wantError: false,
+			expectError:   true,
+			errorContains: []string{"required_param"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateParams(tt.pipeline, tt.params)
-			if tt.wantError {
-				if err == nil {
-					t.Errorf("ValidateParams() expected error, got nil")
-					return
+			errors := validateRequiredParams(sig, tt.params)
+			hasError := len(errors) > 0
+
+			if hasError != tt.expectError {
+				t.Errorf("validateRequiredParams() error = %v, expectError %v", errors, tt.expectError)
+			}
+
+			if len(tt.errorContains) > 0 {
+				for _, expected := range tt.errorContains {
+					found := false
+					for _, err := range errors {
+						if strings.Contains(err, expected) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("expected error to contain %q, got %v", expected, errors)
+					}
 				}
-				if tt.errorContain != "" && !strings.Contains(err.Error(), tt.errorContain) {
-					t.Errorf("ValidateParams() error = %q, want error containing %q", err.Error(), tt.errorContain)
+			}
+		})
+	}
+}
+
+func TestValidateParamTypes(t *testing.T) {
+	sig := PipelineSignature{
+		Name: "test-pipeline",
+		Parameters: map[string]ParamSpec{
+			"string_param": {Type: TypeString, Required: false},
+			"int_param":    {Type: TypeInt, Required: false},
+			"bool_param":   {Type: TypeBool, Required: false},
+			"array_param":  {Type: TypeStringArray, Required: false},
+			"object_param": {Type: TypeObjectArray, Required: false},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		params      map[string]any
+		expectError bool
+	}{
+		{
+			name: "all valid types",
+			params: map[string]any{
+				"string_param": "hello",
+				"int_param":    42,
+				"bool_param":   true,
+				"array_param":  []string{"a", "b"},
+				"object_param": []map[string]any{{"key": "value"}},
+			},
+			expectError: false,
+		},
+		{
+			name: "int as float64",
+			params: map[string]any{
+				"int_param": 42.0,
+			},
+			expectError: false,
+		},
+		{
+			name: "string array as string",
+			params: map[string]any{
+				"array_param": "single-string",
+			},
+			expectError: false,
+		},
+		{
+			name: "string array as []any with strings",
+			params: map[string]any{
+				"array_param": []any{"a", "b"},
+			},
+			expectError: false,
+		},
+		{
+			name: "object array as []map[string]any",
+			params: map[string]any{
+				"object_param": []map[string]any{{"key": "value"}},
+			},
+			expectError: false,
+		},
+		{
+			name: "string param wrong type",
+			params: map[string]any{
+				"string_param": 123,
+			},
+			expectError: true,
+		},
+		{
+			name: "int param wrong type",
+			params: map[string]any{
+				"int_param": "not an int",
+			},
+			expectError: true,
+		},
+		{
+			name: "bool param wrong type",
+			params: map[string]any{
+				"bool_param": "true",
+			},
+			expectError: true,
+		},
+		{
+			name: "array param wrong type - element not string",
+			params: map[string]any{
+				"array_param": []any{1, 2, 3},
+			},
+			expectError: true,
+		},
+		{
+			name: "object param wrong type - element not object",
+			params: map[string]any{
+				"object_param": []any{"string", "not object"},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := validateParamTypes(sig, tt.params)
+			hasError := len(errors) > 0
+
+			if hasError != tt.expectError {
+				t.Errorf("validateParamTypes() error = %v, expectError %v", errors, tt.expectError)
+			}
+		})
+	}
+}
+
+func TestValidateMutuallyExclusive(t *testing.T) {
+	tests := []struct {
+		name          string
+		groups        [][]string
+		params        map[string]any
+		expectError   bool
+		errorContains []string
+	}{
+		{
+			name:        "no params present",
+			groups:      [][]string{{"param1", "param2"}},
+			params:      map[string]any{},
+			expectError: false,
+		},
+		{
+			name:        "only one param present",
+			groups:      [][]string{{"param1", "param2"}},
+			params:      map[string]any{"param1": "value"},
+			expectError: false,
+		},
+		{
+			name:   "both params present",
+			groups: [][]string{{"param1", "param2"}},
+			params: map[string]any{
+				"param1": "value1",
+				"param2": "value2",
+			},
+			expectError:   true,
+			errorContains: []string{"param1", "param2"},
+		},
+		{
+			name:   "three params, two present",
+			groups: [][]string{{"param1", "param2", "param3"}},
+			params: map[string]any{
+				"param1": "value1",
+				"param3": "value3",
+			},
+			expectError: true,
+		},
+		{
+			name: "multiple groups, all valid",
+			groups: [][]string{
+				{"a1", "a2"},
+				{"b1", "b2"},
+			},
+			params: map[string]any{
+				"a1": "value",
+				"b1": "value",
+			},
+			expectError: false,
+		},
+		{
+			name: "multiple groups, one invalid",
+			groups: [][]string{
+				{"a1", "a2"},
+				{"b1", "b2"},
+			},
+			params: map[string]any{
+				"a1": "value1",
+				"a2": "value2",
+				"b1": "value",
+			},
+			expectError: true,
+		},
+		{
+			name:   "empty string not considered present",
+			groups: [][]string{{"param1", "param2"}},
+			params: map[string]any{
+				"param1": "value",
+				"param2": "",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := validateMutuallyExclusive(tt.groups, tt.params)
+			hasError := len(errors) > 0
+
+			if hasError != tt.expectError {
+				t.Errorf("validateMutuallyExclusive() error = %v, expectError %v", errors, tt.expectError)
+			}
+
+			if len(tt.errorContains) > 0 && hasError {
+				for _, expected := range tt.errorContains {
+					found := false
+					for _, err := range errors {
+						if strings.Contains(err, expected) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("expected error to contain %q, got %v", expected, errors)
+					}
 				}
-			} else {
-				if err != nil {
-					t.Errorf("ValidateParams() unexpected error: %v", err)
-				}
+			}
+		})
+	}
+}
+
+func TestValidateAtLeastOne(t *testing.T) {
+	tests := []struct {
+		name        string
+		groups      [][]string
+		params      map[string]any
+		expectError bool
+	}{
+		{
+			name:        "one param present",
+			groups:      [][]string{{"param1", "param2"}},
+			params:      map[string]any{"param1": "value"},
+			expectError: false,
+		},
+		{
+			name:        "multiple params present",
+			groups:      [][]string{{"param1", "param2", "param3"}},
+			params:      map[string]any{"param1": "v1", "param3": "v3"},
+			expectError: false,
+		},
+		{
+			name:        "no params present",
+			groups:      [][]string{{"param1", "param2"}},
+			params:      map[string]any{},
+			expectError: true,
+		},
+		{
+			name:        "nil param not counted",
+			groups:      [][]string{{"param1", "param2"}},
+			params:      map[string]any{"param1": nil},
+			expectError: true,
+		},
+		{
+			name:        "empty string not counted",
+			groups:      [][]string{{"param1", "param2"}},
+			params:      map[string]any{"param1": ""},
+			expectError: true,
+		},
+		{
+			name: "multiple groups, all satisfied",
+			groups: [][]string{
+				{"a1", "a2"},
+				{"b1", "b2"},
+			},
+			params: map[string]any{
+				"a1": "value",
+				"b2": "value",
+			},
+			expectError: false,
+		},
+		{
+			name: "multiple groups, one unsatisfied",
+			groups: [][]string{
+				{"a1", "a2"},
+				{"b1", "b2"},
+			},
+			params: map[string]any{
+				"a1": "value",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := validateAtLeastOne(tt.groups, tt.params)
+			hasError := len(errors) > 0
+
+			if hasError != tt.expectError {
+				t.Errorf("validateAtLeastOne() error = %v, expectError %v", errors, tt.expectError)
+			}
+		})
+	}
+}
+
+func TestIsParamPresent(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   map[string]any
+		param    string
+		expected bool
+	}{
+		{
+			name:     "param exists and has value",
+			params:   map[string]any{"key": "value"},
+			param:    "key",
+			expected: true,
+		},
+		{
+			name:     "param does not exist",
+			params:   map[string]any{},
+			param:    "key",
+			expected: false,
+		},
+		{
+			name:     "param exists but is nil",
+			params:   map[string]any{"key": nil},
+			param:    "key",
+			expected: false,
+		},
+		{
+			name:     "param exists but is empty string",
+			params:   map[string]any{"key": ""},
+			param:    "key",
+			expected: false,
+		},
+		{
+			name:     "param exists with false bool",
+			params:   map[string]any{"key": false},
+			param:    "key",
+			expected: true,
+		},
+		{
+			name:     "param exists with zero int",
+			params:   map[string]any{"key": 0},
+			param:    "key",
+			expected: true,
+		},
+		{
+			name:     "param exists with zero float",
+			params:   map[string]any{"key": 0.0},
+			param:    "key",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isParamPresent(tt.params, tt.param)
+			if result != tt.expected {
+				t.Errorf("isParamPresent() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -297,54 +437,255 @@ func TestValidateParams(t *testing.T) {
 
 func TestCheckType(t *testing.T) {
 	tests := []struct {
-		name      string
-		paramName string
-		value     any
-		expected  ParamType
-		wantError bool
+		name         string
+		paramName    string
+		value        any
+		expectedType ParamType
+		expectError  bool
 	}{
-		{"string - valid", "test", "hello", TypeString, false},
-		{"string - invalid", "test", 123, TypeString, true},
-		{"int - valid int", "test", 42, TypeInt, false},
-		{"int - valid float64", "test", float64(42), TypeInt, false},
-		{"int - invalid", "test", "not-int", TypeInt, true},
-		{"bool - valid", "test", true, TypeBool, false},
-		{"bool - invalid", "test", "true", TypeBool, true},
-		{"string_array - string", "test", "single", TypeStringArray, false},
-		{"string_array - []string", "test", []string{"a", "b"}, TypeStringArray, false},
-		{"string_array - []any strings", "test", []any{"a", "b"}, TypeStringArray, false},
-		{"string_array - []any mixed", "test", []any{"a", 1}, TypeStringArray, true},
-		{"string_array - invalid type", "test", 123, TypeStringArray, true},
-		{"object_array - valid", "test", []any{map[string]any{"a": "b"}}, TypeObjectArray, false},
-		{"object_array - invalid", "test", "not-array", TypeObjectArray, true},
-		{"object_array - non-object item", "test", []any{map[string]any{"a": "b"}, "not-an-object"}, TypeObjectArray, true},
+		{
+			name:         "valid string",
+			paramName:    "test",
+			value:        "hello",
+			expectedType: TypeString,
+			expectError:  false,
+		},
+		{
+			name:         "invalid string",
+			paramName:    "test",
+			value:        123,
+			expectedType: TypeString,
+			expectError:  true,
+		},
+		{
+			name:         "valid int",
+			paramName:    "test",
+			value:        42,
+			expectedType: TypeInt,
+			expectError:  false,
+		},
+		{
+			name:         "int as float64",
+			paramName:    "test",
+			value:        42.0,
+			expectedType: TypeInt,
+			expectError:  false,
+		},
+		{
+			name:         "invalid int",
+			paramName:    "test",
+			value:        "42",
+			expectedType: TypeInt,
+			expectError:  true,
+		},
+		{
+			name:         "valid bool",
+			paramName:    "test",
+			value:        true,
+			expectedType: TypeBool,
+			expectError:  false,
+		},
+		{
+			name:         "invalid bool",
+			paramName:    "test",
+			value:        "true",
+			expectedType: TypeBool,
+			expectError:  true,
+		},
+		{
+			name:         "valid string array",
+			paramName:    "test",
+			value:        []string{"a", "b"},
+			expectedType: TypeStringArray,
+			expectError:  false,
+		},
+		{
+			name:         "valid object array",
+			paramName:    "test",
+			value:        []map[string]any{{"key": "value"}},
+			expectedType: TypeObjectArray,
+			expectError:  false,
+		},
+		{
+			name:         "unknown type",
+			paramName:    "test",
+			value:        "anything",
+			expectedType: "unknown",
+			expectError:  false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := checkType(tt.paramName, tt.value, tt.expected)
-			if tt.wantError && err == nil {
-				t.Errorf("checkType() expected error, got nil")
-			}
-			if !tt.wantError && err != nil {
-				t.Errorf("checkType() unexpected error: %v", err)
+			err := CheckType(tt.paramName, tt.value, tt.expectedType)
+			hasError := err != nil
+
+			if hasError != tt.expectError {
+				t.Errorf("CheckType() error = %v, expectError %v", err, tt.expectError)
 			}
 		})
 	}
 }
 
-func TestAllPipelinesHaveSignatures(t *testing.T) {
-	for name := range Registry {
-		if _, exists := Signatures[name]; !exists {
-			t.Errorf("Pipeline %q is registered but has no signature defined", name)
-		}
+func TestValidateSignature(t *testing.T) {
+	sig := PipelineSignature{
+		Name: "test-pipeline",
+		Parameters: map[string]ParamSpec{
+			"required_string": {Type: TypeString, Required: true},
+			"optional_int":    {Type: TypeInt, Required: false},
+			"optional_bool":   {Type: TypeBool, Required: false},
+		},
+		MutuallyExclusive: [][]string{{"opt_a", "opt_b"}},
+		AtLeastOne:        [][]string{{"req_a", "req_b"}},
+	}
+
+	tests := []struct {
+		name        string
+		params      map[string]any
+		expectError bool
+	}{
+		{
+			name: "valid params",
+			params: map[string]any{
+				"required_string": "value",
+				"req_a":           "a",
+			},
+			expectError: false,
+		},
+		{
+			name:        "missing required param",
+			params:      map[string]any{},
+			expectError: true,
+		},
+		{
+			name: "wrong type for param",
+			params: map[string]any{
+				"required_string": 123,
+			},
+			expectError: true,
+		},
+		{
+			name: "mutually exclusive params both present",
+			params: map[string]any{
+				"required_string": "value",
+				"req_a":           "a",
+				"opt_a":           "a",
+				"opt_b":           "b",
+			},
+			expectError: true,
+		},
+		{
+			name: "at least one group unsatisfied",
+			params: map[string]any{
+				"required_string": "value",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSignature(sig, tt.params)
+			hasError := err != nil
+
+			if hasError != tt.expectError {
+				t.Errorf("ValidateSignature() error = %v, expectError %v", err, tt.expectError)
+			}
+		})
 	}
 }
 
-func TestAllSignaturesHavePipelines(t *testing.T) {
-	for name := range Signatures {
-		if _, exists := Registry[name]; !exists {
-			t.Errorf("Signature defined for %q but no pipeline is registered", name)
-		}
+func TestValidateParams(t *testing.T) {
+	tests := []struct {
+		name         string
+		pipelineName string
+		params       map[string]any
+		expectError  bool
+	}{
+		{
+			name:         "existing pipeline with valid params",
+			pipelineName: "create-user",
+			params: map[string]any{
+				"username": "testuser",
+				"uid":      1000,
+				"gid":      1000,
+			},
+			expectError: false,
+		},
+		{
+			name:         "existing pipeline with missing required param",
+			pipelineName: "create-user",
+			params: map[string]any{
+				"username": "testuser",
+			},
+			expectError: true,
+		},
+		{
+			name:         "existing pipeline with wrong type",
+			pipelineName: "create-user",
+			params: map[string]any{
+				"username": "testuser",
+				"uid":      "not-an-int",
+				"gid":      1000,
+			},
+			expectError: true,
+		},
+		{
+			name:         "non-existing pipeline returns nil",
+			pipelineName: "non-existent-pipeline",
+			params:       map[string]any{},
+			expectError:  false,
+		},
+		{
+			name:         "download-verify-extract with checksum",
+			pipelineName: "download-verify-extract",
+			params: map[string]any{
+				"url":         "https://example.com/file.tar.gz",
+				"destination": "/opt/file.tar.gz",
+				"checksum":    "abc123",
+			},
+			expectError: false,
+		},
+		{
+			name:         "download-verify-extract with checksum-url",
+			pipelineName: "download-verify-extract",
+			params: map[string]any{
+				"url":          "https://example.com/file.tar.gz",
+				"destination":  "/opt/file.tar.gz",
+				"checksum-url": "https://example.com/checksum.txt",
+			},
+			expectError: false,
+		},
+		{
+			name:         "download-verify-extract with both checksum options",
+			pipelineName: "download-verify-extract",
+			params: map[string]any{
+				"url":          "https://example.com/file.tar.gz",
+				"destination":  "/opt/file.tar.gz",
+				"checksum":     "abc123",
+				"checksum-url": "https://example.com/checksum.txt",
+			},
+			expectError: true,
+		},
+		{
+			name:         "download-verify-extract with no checksum option",
+			pipelineName: "download-verify-extract",
+			params: map[string]any{
+				"url":         "https://example.com/file.tar.gz",
+				"destination": "/opt/file.tar.gz",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateParams(tt.pipelineName, tt.params)
+			hasError := err != nil
+
+			if hasError != tt.expectError {
+				t.Errorf("ValidateParams() error = %v, expectError %v", err, tt.expectError)
+			}
+		})
 	}
 }

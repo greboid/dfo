@@ -305,6 +305,46 @@ func generateGoModDownloadStep(workdir string) Step {
 	}
 }
 
+func generateGoGenerateSteps(paths []string, workdir string) []Step {
+	var steps []Step
+	for _, path := range paths {
+		steps = append(steps, Step{
+			Name:    fmt.Sprintf("Run go generate %s", path),
+			Content: fmt.Sprintf("WORKDIR %s\nRUN go generate %s\n", workdir, path),
+		})
+	}
+	return steps
+}
+
+func generateGoInstallSteps(tools []string) []Step {
+	var steps []Step
+	for _, tool := range tools {
+		steps = append(steps, Step{
+			Name:    fmt.Sprintf("Install %s", tool),
+			Content: fmt.Sprintf("RUN go install %s\n", tool),
+		})
+	}
+	return steps
+}
+
+func generateGoInstallLicenseSteps(tools []string, output string) []Step {
+	var steps []Step
+	noticesPath := "/notices" + output
+
+	for _, tool := range tools {
+		pkg := tool
+		if idx := strings.Index(tool, "@"); idx != -1 {
+			pkg = tool[:idx]
+		}
+
+		steps = append(steps, Step{
+			Name:    fmt.Sprintf("Generate license for %s", pkg),
+			Content: fmt.Sprintf("RUN go run github.com/google/go-licenses@latest save %s --save_path=%s || true\n", tool, noticesPath),
+		})
+	}
+	return steps
+}
+
 func generateCloneStep(repo, tag, commit, workdir string) Step {
 	var cloneCmd string
 	if commit != "" {
@@ -524,6 +564,9 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 	}
 
 	patches := util.ExtractStringSlice(params, "patches")
+	packages := util.ExtractStringSlice(params, "packages")
+	goGenerate := util.ExtractStringSlice(params, "go-generate")
+	goInstall := util.ExtractStringSlice(params, "go-install")
 
 	steps := []Step{
 		generateCloneStep(repo, tag, "", workdir),
@@ -534,12 +577,28 @@ func BuildGo(params map[string]any) (PipelineResult, error) {
 		buildDeps = append(buildDeps, "patch")
 		steps = append(steps, generatePatchSteps(patches, workdir)...)
 	}
+	if len(packages) > 0 {
+		buildDeps = append(buildDeps, packages...)
+	}
+
+	steps = append(steps, generateGoModDownloadStep(workdir))
+
+	if len(goInstall) > 0 {
+		steps = append(steps, generateGoInstallSteps(goInstall)...)
+	}
+
+	if len(goGenerate) > 0 {
+		steps = append(steps, generateGoGenerateSteps(goGenerate, workdir)...)
+	}
 
 	steps = append(steps,
-		generateGoModDownloadStep(workdir),
 		generateGoBuildStep(pkg, output, "", goTags, goExperiment, cgo),
 		generateLicenseStep(pkg, output, ignore),
 	)
+
+	if len(goInstall) > 0 {
+		steps = append(steps, generateGoInstallLicenseSteps(goInstall, output)...)
+	}
 
 	return PipelineResult{
 		Steps:     steps,

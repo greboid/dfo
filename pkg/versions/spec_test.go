@@ -1,39 +1,48 @@
 package versions
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestVersionSpec_IsLatest(t *testing.T) {
 	tests := []struct {
-		name string
-		spec VersionSpec
-		want bool
+		name     string
+		value    string
+		expected bool
 	}{
 		{
-			name: "latest version",
-			spec: VersionSpec{Key: "go", Value: "latest"},
-			want: true,
+			name:     "latest prefix",
+			value:    "latest",
+			expected: true,
 		},
 		{
-			name: "latest with major version",
-			spec: VersionSpec{Key: "postgres16", Value: "latest:16"},
-			want: true,
+			name:     "latest with qualifier",
+			value:    "latest/stable",
+			expected: true,
 		},
 		{
-			name: "specific version",
-			spec: VersionSpec{Key: "go", Value: "1.22.0"},
-			want: false,
+			name:     "specific version",
+			value:    "v1.0.0",
+			expected: false,
 		},
 		{
-			name: "empty value",
-			spec: VersionSpec{Key: "go", Value: ""},
-			want: false,
+			name:     "semver",
+			value:    "1.2.3",
+			expected: false,
+		},
+		{
+			name:     "empty string",
+			value:    "",
+			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.spec.IsLatest(); got != tt.want {
-				t.Errorf("IsLatest() = %v, want %v", got, tt.want)
+			spec := VersionSpec{Value: tt.value}
+			result := spec.IsLatest()
+			if result != tt.expected {
+				t.Errorf("VersionSpec.IsLatest() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -41,36 +50,38 @@ func TestVersionSpec_IsLatest(t *testing.T) {
 
 func TestVersionSpec_IsGitRepo(t *testing.T) {
 	tests := []struct {
-		name string
-		spec VersionSpec
-		want bool
+		name     string
+		key      string
+		expected bool
 	}{
 		{
-			name: "https git repo",
-			spec: VersionSpec{Key: "https://github.com/owner/repo", Value: "latest"},
-			want: true,
+			name:     "https URL",
+			key:      "https://github.com/owner/repo",
+			expected: true,
 		},
 		{
-			name: "http git repo",
-			spec: VersionSpec{Key: "http://github.com/owner/repo", Value: "latest"},
-			want: true,
+			name:     "http URL",
+			key:      "http://github.com/owner/repo",
+			expected: true,
 		},
 		{
-			name: "not a git repo",
-			spec: VersionSpec{Key: "go", Value: "latest"},
-			want: false,
+			name:     "non-URL key",
+			key:      "postgres",
+			expected: false,
 		},
 		{
-			name: "empty key",
-			spec: VersionSpec{Key: "", Value: "latest"},
-			want: false,
+			name:     "empty key",
+			key:      "",
+			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.spec.IsGitRepo(); got != tt.want {
-				t.Errorf("IsGitRepo() = %v, want %v", got, tt.want)
+			spec := VersionSpec{Key: tt.key}
+			result := spec.IsGitRepo()
+			if result != tt.expected {
+				t.Errorf("VersionSpec.IsGitRepo() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -78,56 +89,68 @@ func TestVersionSpec_IsGitRepo(t *testing.T) {
 
 func TestVersionSpec_VersionType(t *testing.T) {
 	tests := []struct {
-		name string
-		spec VersionSpec
-		want string
+		name     string
+		key      string
+		expected string
 	}{
 		{
-			name: "git repo",
-			spec: VersionSpec{Key: "https://github.com/owner/repo", Value: "latest"},
-			want: "git",
+			name:     "https URL is git",
+			key:      "https://github.com/owner/repo",
+			expected: "git",
 		},
 		{
-			name: "go",
-			spec: VersionSpec{Key: "go", Value: "latest"},
-			want: "go",
+			name:     "http URL is git",
+			key:      "http://gitlab.com/owner/repo",
+			expected: "git",
 		},
 		{
-			name: "golang",
-			spec: VersionSpec{Key: "golang", Value: "latest"},
-			want: "go",
+			name:     "go key",
+			key:      "go",
+			expected: "go",
 		},
 		{
-			name: "postgres",
-			spec: VersionSpec{Key: "postgres", Value: "latest"},
-			want: "postgres",
+			name:     "golang key",
+			key:      "golang",
+			expected: "go",
 		},
 		{
-			name: "postgres16",
-			spec: VersionSpec{Key: "postgres16", Value: "latest:16"},
-			want: "postgres",
+			name:     "postgres key",
+			key:      "postgres",
+			expected: "postgres",
 		},
 		{
-			name: "postgresql",
-			spec: VersionSpec{Key: "postgresql", Value: "latest"},
-			want: "postgres",
+			name:     "postgresql key",
+			key:      "postgresql",
+			expected: "postgres",
 		},
 		{
-			name: "alpine",
-			spec: VersionSpec{Key: "alpine", Value: "latest"},
-			want: "alpine",
+			name:     "postgres15 key",
+			key:      "postgres15",
+			expected: "postgres",
 		},
 		{
-			name: "unknown",
-			spec: VersionSpec{Key: "customapp", Value: "latest"},
-			want: "unknown",
+			name:     "alpine key",
+			key:      "alpine",
+			expected: "alpine",
+		},
+		{
+			name:     "unknown key",
+			key:      "unknown-package",
+			expected: "unknown",
+		},
+		{
+			name:     "empty key",
+			key:      "",
+			expected: "unknown",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.spec.VersionType(); got != tt.want {
-				t.Errorf("VersionType() = %v, want %v", got, tt.want)
+			spec := VersionSpec{Key: tt.key}
+			result := spec.VersionType()
+			if result != tt.expected {
+				t.Errorf("VersionSpec.VersionType() = %q, want %q", result, tt.expected)
 			}
 		})
 	}
