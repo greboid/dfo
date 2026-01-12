@@ -105,10 +105,31 @@ func executeTemplate(stage *Stage, index int) (templates.TemplateResult, error) 
 
 func convertAndNameTemplateStages(result *templates.TemplateResult, originalStage *Stage, originalIndex int) []Stage {
 	var stages []Stage
+	stageNameMap := make(map[string]string)
+
+	for _, stageResult := range result.Stages {
+		if stageResult.Name != "" {
+			stageNameMap[stageResult.Name] = stageResult.Name
+		}
+	}
 
 	for j, stageResult := range result.Stages {
 		newStage := convertStageResult(stageResult)
-		newStage.Name = generateStageName(originalStage, originalIndex, j, len(result.Stages))
+
+		if stageResult.Name != "" {
+			newStage.Name = stageResult.Name
+		} else {
+			newStage.Name = generateStageName(originalStage, originalIndex, j, len(result.Stages))
+		}
+
+		for i := range newStage.Pipeline {
+			if newStage.Pipeline[i].Copy != nil {
+				if newName, ok := stageNameMap[newStage.Pipeline[i].Copy.FromStage]; ok {
+					newStage.Pipeline[i].Copy.FromStage = newName
+				}
+			}
+		}
+
 		stages = append(stages, newStage)
 	}
 
