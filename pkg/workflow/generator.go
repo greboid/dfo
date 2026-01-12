@@ -57,7 +57,6 @@ func createContainerBuildJob(containerName string, needs []string) Job {
 			{Name: "Checkout code", Uses: "actions/checkout@v6"},
 			{Name: "Set up Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
 			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
-			{Name: "Set up buildah", Uses: "redhat-actions/setup-podman@v1", With: map[string]string{"dockerfile": "false"}},
 			{Name: "Login to registry", Uses: "redhat-actions/podman-login@v1", With: map[string]string{"registry": "${{ secrets.REGISTRY }}", "username": "${{ secrets.REGISTRY_USER }}", "password": "${{ secrets.REGISTRY_PASS }}"}},
 			{Name: fmt.Sprintf("Build %s", containerName), Run: fmt.Sprintf("dfo single --build --push --registry \"${{ secrets.REGISTRY }}\" %s", containerName)},
 		},
