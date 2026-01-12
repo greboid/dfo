@@ -17,10 +17,8 @@ func Generate(
 ) error {
 	workflow := createWorkflowSkeleton()
 
-	addSetupCacheJob(workflow)
 	addContainerBuildJobs(workflow, depGraph, layers)
-	addUpdateJobs(workflow, layers)
-	addCommitJob(workflow, layers)
+	addCommitJob(workflow, depGraph)
 
 	return writeWorkflowFile(workflow, outputPath)
 }
@@ -41,26 +39,12 @@ func createWorkflowSkeleton() *Workflow {
 	}
 }
 
-func addSetupCacheJob(workflow *Workflow) {
-	workflow.Jobs["setup-cache"] = Job{
-		Name:   "Setup cache",
-		RunsOn: "ubuntu-latest",
-		Steps: []Step{
-			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
-			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
-		},
-	}
-}
-
 func addContainerBuildJobs(workflow *Workflow, depGraph *graph.Graph, layers [][]string) {
-	var previousUpdateJob string
-
-	for layerIdx, layer := range layers {
+	for _, layer := range layers {
 		for _, containerName := range layer {
-			needs := buildNeedsArray(depGraph, containerName, previousUpdateJob)
+			needs := buildNeedsArray(depGraph, containerName)
 			workflow.Jobs[containerName] = createContainerBuildJob(containerName, needs)
 		}
-		previousUpdateJob = fmt.Sprintf("update-layer-%d", layerIdx)
 	}
 }
 
@@ -71,49 +55,35 @@ func createContainerBuildJob(containerName string, needs []string) Job {
 		RunsOn: "ubuntu-latest",
 		Steps: []Step{
 			{Name: "Checkout code", Uses: "actions/checkout@v6"},
-			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
+			{Name: "Set up Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
 			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
-			{Name: fmt.Sprintf("Build %s", containerName), Run: fmt.Sprintf("dfo single --build --registry \"${{ secrets.REGISTRY }}\" %s", containerName)},
+			{Name: "Set up buildah", Uses: "redhat-actions/setup-podman@v1", With: map[string]string{"dockerfile": "false"}},
+			{Name: "Login to registry", Uses: "redhat-actions/podman-login@v1", With: map[string]string{"registry": "${{ secrets.REGISTRY }}", "username": "${{ secrets.REGISTRY_USER }}", "password": "${{ secrets.REGISTRY_PASS }}"}},
+			{Name: fmt.Sprintf("Build %s", containerName), Run: fmt.Sprintf("dfo single --build --push --registry \"${{ secrets.REGISTRY }}\" %s", containerName)},
 		},
 	}
 }
 
-func addUpdateJobs(workflow *Workflow, layers [][]string) {
-	for layerIdx, layer := range layers {
-		updateJobName := fmt.Sprintf("update-layer-%d", layerIdx)
-		updateNeeds := append([]string{"setup-cache"}, layer...)
-		workflow.Jobs[updateJobName] = createUpdateJob(layerIdx, updateNeeds, layer)
-	}
-}
-
-func createUpdateJob(layerIdx int, needs []string, layer []string) Job {
-	return Job{
-		Name:   fmt.Sprintf("Update layer %d tags", layerIdx),
-		Needs:  needs,
-		RunsOn: "ubuntu-latest",
-		Steps: []Step{
-			{Name: "Checkout code", Uses: "actions/checkout@v6", With: map[string]string{"token": "${{ secrets.GITHUB_TOKEN }}"}},
-			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
-			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
-			{Name: fmt.Sprintf("Update layer %d Containerfiles", layerIdx), Run: buildUpdateScript(layer)},
-		},
-	}
-}
-
-func addCommitJob(workflow *Workflow, layers [][]string) {
-	if len(layers) == 0 {
+func addCommitJob(workflow *Workflow, depGraph *graph.Graph) {
+	if len(depGraph.Containers) == 0 {
 		return
 	}
 
+	var allContainers []string
+	for name := range depGraph.Containers {
+		allContainers = append(allContainers, name)
+	}
+	sort.Strings(allContainers)
+
 	workflow.Jobs["commit-changes"] = Job{
 		Name:   "Commit updated files",
-		Needs:  []string{fmt.Sprintf("update-layer-%d", len(layers)-1)},
+		Needs:  allContainers,
 		RunsOn: "ubuntu-latest",
 		Steps: []Step{
 			{Name: "Checkout code", Uses: "actions/checkout@v6", With: map[string]string{"token": "${{ secrets.GITHUB_TOKEN }}"}},
 			{Name: "Setup Go", Uses: "actions/setup-go@v6", With: map[string]string{"go-version": "stable", "cache": "false"}},
 			{Name: "Install latest dfo", Uses: "mattdowdell/go-installer@v0.3.0", With: map[string]string{"package": "github.com/greboid/dfo"}},
-			{Name: "Update all Containerfiles with built image digests", Run: buildFinalUpdateScript(layers)},
+			{Name: "Update all Containerfiles with built image digests", Run: buildFinalUpdateScript(depGraph)},
 			{Name: "Commit and push changes", Run: getCommitScript()},
 		},
 	}
@@ -150,13 +120,8 @@ func writeWorkflowFile(workflow *Workflow, outputPath string) error {
 	return nil
 }
 
-func buildNeedsArray(depGraph *graph.Graph, containerName string, previousUpdateJob string) []string {
-	needs := []string{"setup-cache"}
-
-	if previousUpdateJob != "" {
-		needs = append(needs, previousUpdateJob)
-	}
-
+func buildNeedsArray(depGraph *graph.Graph, containerName string) []string {
+	needs := []string{}
 	container := depGraph.Containers[containerName]
 
 	for _, dep := range container.Dependencies {
@@ -165,28 +130,22 @@ func buildNeedsArray(depGraph *graph.Graph, containerName string, previousUpdate
 		}
 	}
 
-	if len(needs) > 1 {
-		sort.Strings(needs[1:])
+	if len(needs) > 0 {
+		sort.Strings(needs)
 	}
 
 	return needs
 }
 
-func buildUpdateScript(layer []string) string {
-	script := "set -e\n"
-	for _, containerName := range layer {
-		script += fmt.Sprintf("echo 'Updating %s...'\n", containerName)
-		script += fmt.Sprintf("dfo single --registry \"${{ secrets.REGISTRY }}\" %s\n", containerName)
-	}
-	return script
-}
-
-func buildFinalUpdateScript(layers [][]string) string {
+func buildFinalUpdateScript(depGraph *graph.Graph) string {
 	script := "set -e\necho 'Updating all Containerfiles with built image digests...'\n"
-	for _, layer := range layers {
-		for _, containerName := range layer {
-			script += fmt.Sprintf("dfo single --registry \"${{ secrets.REGISTRY }}\" %s\n", containerName)
-		}
+	var allContainers []string
+	for name := range depGraph.Containers {
+		allContainers = append(allContainers, name)
+	}
+	sort.Strings(allContainers)
+	for _, containerName := range allContainers {
+		script += fmt.Sprintf("dfo single --registry \"${{ secrets.REGISTRY }}\" %s\n", containerName)
 	}
 	return script
 }
