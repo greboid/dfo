@@ -42,7 +42,7 @@ func (b *BuildahBuilder) Initialize(ctx context.Context) error {
 func (b *BuildahBuilder) BuildContainer(ctx context.Context, containerName, containerfilePath, contextDir string) (*BuildResult, error) {
 	imageName := b.buildImageName(containerName)
 
-	if err := b.validateContainerfilePath(containerfilePath); err != nil {
+	if err := b.validateContainerfilePath(containerfilePath, contextDir); err != nil {
 		return nil, err
 	}
 
@@ -78,9 +78,10 @@ func (b *BuildahBuilder) buildImageName(containerName string) string {
 	return containerName
 }
 
-func (b *BuildahBuilder) validateContainerfilePath(containerfilePath string) error {
-	if _, err := os.Stat(containerfilePath); os.IsNotExist(err) {
-		return fmt.Errorf("containerfile not found: %s", containerfilePath)
+func (b *BuildahBuilder) validateContainerfilePath(containerfilePath, contextDir string) error {
+	fullPath := filepath.Join(contextDir, containerfilePath)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		return fmt.Errorf("containerfile not found: %s", fullPath)
 	}
 	return nil
 }
@@ -110,7 +111,7 @@ func (b *BuildahBuilder) buildBuildArgs(imageName, containerfilePath, contextDir
 	}
 
 	args = append(args, b.buildStorageArgs()...)
-	args = append(args, contextDir)
+	args = append(args, ".")
 
 	return args
 }

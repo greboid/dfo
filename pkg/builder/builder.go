@@ -214,7 +214,6 @@ func (o *Orchestrator) buildContainer(ctx context.Context, job buildJob, layerId
 	containerName := job.containerName
 	container := o.graph.Containers[containerName]
 	containerDir := filepath.Dir(container.ConfigPath)
-	containerfilePath := filepath.Join(containerDir, "Containerfile")
 
 	if shouldSkip, skipped := o.checkShouldSkip(containerName, containerDir, job.index+1, totalInLayer); shouldSkip {
 		if skipped {
@@ -227,7 +226,7 @@ func (o *Orchestrator) buildContainer(ctx context.Context, job buildJob, layerId
 		return result, err
 	}
 
-	return o.buildAndPushContainer(ctx, containerName, containerfilePath, containerDir, job.index+1, totalInLayer, layerIdx, totalLayers, workerID, container.ConfigPath)
+	return o.buildAndPushContainer(ctx, containerName, "Containerfile", containerDir, job.index+1, totalInLayer, layerIdx, totalLayers, workerID, container.ConfigPath)
 }
 
 func (o *Orchestrator) checkShouldSkip(containerName, containerDir string, index, totalInLayer int) (bool, bool) {
